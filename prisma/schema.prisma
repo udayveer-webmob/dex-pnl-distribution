@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Wallet {
+  id        String     @id @default(cuid())
+  address   String     @unique // lowercase 0x address
+  label     String?
+  createdAt DateTime   @default(now())
+  positions Position[]
+}
+
+model Pool {
+  address        String     @id // lowercase
+  token0         String
+  token0Symbol   String
+  token0Decimals Int
+  token1         String
+  token1Symbol   String
+  token1Decimals Int
+  fee            Int
+  // Which token's USD price comes from CoinGecko (0 or 1); the other is derived from the pool price.
+  refToken       Int
+  positions      Position[]
+}
+
+enum PositionStatus {
+  DISCOVERED // listed, not tracked
+  BACKFILLING // tracked, daily history being replayed
+  TRACKING // live 2-minute polling
+  CLOSED // fully withdrawn and collected; P&L frozen
+  ERROR
+}
+
+model Position {
+  id          String         @id @default(cuid())
+  tokenId     String         @unique // NonfungiblePositionManager token id (uint256 as string)
+  walletId    String
+  wallet      Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  poolAddress String
+  pool        Pool           @relation(fields: [poolAddress], references: [address])
+  tickLower   Int
+  tickUpper   Int
+  status      PositionStatus @default(DISCOVERED)
+  mintBlock   BigInt?
+  // Last block the engine has processed (events are fetched from lastBlock + 1).
+  lastBlock   BigInt?
+  // Serialized P&L engine state after lastBlock; the next step resumes from it.
+  state       Json?
+  // Progress of the running catch-up, while the worker processes it: { step, steps, label, done, total, updatedAt }
+  progress    Json?
+  lastError   String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  snapshots Snapshot[]
+  events    PositionEvent[]
+}
+
+enum SnapshotKind {
+  DAILY // last block of a UTC day
+  POLL // 2-minute live poll
+  EVENT // after applying liquidity events of one block
+}
+
+model Snapshot {
+  id         String       @id @default(cuid())
+  seq        Int          @default(autoincrement()) // insertion order = chronological order
+  positionId String
+  position   Position     @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  kind       SnapshotKind
+  block      BigInt
+  timestamp  DateTime
+  date       String // UTC day, YYYY-MM-DD
+
+  // Market and position state
+  sqrtPriceX96  String
+  tick          Int
+  liquidity     String
+  inRange       Boolean
+  usd0          Float
+  usd1          Float
+  amount0       Float
+  amount1       Float
+  positionValue Float
+  hodl0         Float
+  hodl1         Float
+  hodlValue     Float
+  heldFees0     Float
+  heldFees1     Float
+  heldFeesValue Float
+  costBasis     Float
+  navOpen       Float
+  nav           Float
+
+  // Interval P&L since the previous snapshot
+  feeIncome   Float
+  gasCost     Float
+  feeReval    Float
+  priceEffect Float
+  ilChange    Float
+  capitalIn   Float
+  capitalOut  Float
+  pnl         Float
+
+  // Moved from unrealised to realised during the interval
+  feeRevalToRealised    Float
+  priceEffectToRealised Float
+  ilToRealised          Float
+
+  // Cumulative
+  rFeeIncome      Float
+  rGasCost        Float
+  rFeeReval       Float
+  rPriceEffect    Float
+  rIl             Float
+  realisedTotal   Float
+  uPriceEffect    Float
+  uIl             Float
+  uFeeReval       Float
+  unrealisedTotal Float
+  totalPnl        Float
+  netCapital      Float
+
+  checksOk Boolean
+  checks   Json
+  state    Json
+
+  createdAt DateTime @default(now())
+
+  @@index([positionId, seq])
+  @@index([positionId, date])
+}
+
+enum EventType {
+  INCREASE
+  DECREASE
+  COLLECT
+}
+
+model PositionEvent {
+  id                String    @id @default(cuid())
+  positionId        String
+  position          Position  @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  type              EventType
+  block             BigInt
+  logIndex          Int
+  txHash            String
+  timestamp         DateTime
+  liquidity         String? // for INCREASE / DECREASE
+  amount0           String // raw token units
+  amount1           String
+  gasUsed           String?
+  effectiveGasPrice String?
+
+  @@unique([txHash, logIndex])
+  @@index([positionId, block])
+}
+
+model TokenPrice {
+  token     String // lowercase address, or "eth" for native ether
+  timestamp DateTime
+  usd       Float
+
+  @@id([token, timestamp])
+}
