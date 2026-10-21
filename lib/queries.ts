@@ -2,7 +2,8 @@
 
 import { db } from "@/lib/db";
 import type { Pool, Position, Snapshot } from "@/lib/generated/prisma/client";
-import type { DailyRowDto, IntradayPointDto, PositionSummaryDto, ProgressDto } from "@/lib/pnl/types";
+import type { DailyRowDto, DirectPositionPnlDto, IntradayPointDto, PositionSummaryDto, ProgressDto } from "@/lib/pnl/types";
+import type { CloseSnapshot } from "@/lib/pnl/dayPnl";
 
 type LatestFields = Pick<
   Snapshot,
@@ -58,11 +59,25 @@ interface DayAggregate {
   feeRevalToRealised: number;
   priceEffectToRealised: number;
   ilToRealised: number;
+  booked: number;
+  bookedPosition: number;
 }
 
-/** Day-wise rows: interval P&L summed per UTC day, state and cumulative totals from the day's last snapshot. */
+/**
+ * Day-wise rows: interval P&L summed per UTC day, state and cumulative totals from the day's last snapshot.
+ *
+ * P&L booked per snapshot = capital out − cost basis of what left, where the cost basis removed is
+ * prevCostBasis + capitalIn − costBasis (cost basis only falls on withdrawals). Of that, the position
+ * part is the price effect and positional P&L realised on the withdrawal; the rest is collected fees.
+ */
 export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
   const days = await db().$queryRaw<DayAggregate[]>`
+    WITH s AS (
+      SELECT *,
+        "capitalOut" - (COALESCE(LAG("costBasis") OVER (ORDER BY seq), 0) + "capitalIn" - "costBasis") AS booked
+      FROM "Snapshot"
+      WHERE "positionId" = ${positionId}
+    )
     SELECT date,
       COUNT(*)::int AS snapshots,
       (array_agg("navOpen" ORDER BY seq ASC))[1] AS "navOpen",
@@ -78,9 +93,10 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
       SUM(pnl) AS pnl,
       SUM("feeRevalToRealised") AS "feeRevalToRealised",
       SUM("priceEffectToRealised") AS "priceEffectToRealised",
-      SUM("ilToRealised") AS "ilToRealised"
-    FROM "Snapshot"
-    WHERE "positionId" = ${positionId}
+      SUM("ilToRealised") AS "ilToRealised",
+      SUM(booked) AS booked,
+      SUM("priceEffectToRealised" + "ilToRealised") AS "bookedPosition"
+    FROM s
     GROUP BY date
     ORDER BY date`;
 
@@ -111,6 +127,11 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
         capitalOut: d.capitalOut,
         pnl: d.pnl,
       },
+      booked: {
+        total: d.booked,
+        position: d.bookedPosition,
+        fees: d.booked - d.bookedPosition,
+      },
       reclassified: {
         feeRevalToRealised: d.feeRevalToRealised,
         priceEffectToRealised: d.priceEffectToRealised,
@@ -132,6 +153,44 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
       checksOk: d.checksOk,
     };
   });
+}
+
+/**
+ * Direct position P&L from the on-chain IncreaseLiquidity / DecreaseLiquidity amounts, valued at the
+ * USD prices of the snapshot taken at each event, plus the latest position value. Independent of the
+ * engine's price effect / positional split, which must add up to the same figure.
+ */
+export async function directPositionPnl(
+  positionId: string,
+  decimals0: number,
+  decimals1: number,
+  currentValue: number,
+): Promise<DirectPositionPnlDto> {
+  const rows = await db().$queryRaw<{ type: "INCREASE" | "DECREASE"; value: number }[]>`
+    SELECT e.type, SUM(
+      (e.amount0::numeric / power(10::numeric, ${decimals0}::int)) * s.usd0::numeric
+      + (e.amount1::numeric / power(10::numeric, ${decimals1}::int)) * s.usd1::numeric
+    )::float8 AS value
+    FROM "PositionEvent" e
+    JOIN "Snapshot" s ON s."positionId" = e."positionId" AND s.block = e.block AND s.kind = 'EVENT'
+    WHERE e."positionId" = ${positionId} AND e.type IN ('INCREASE', 'DECREASE')
+    GROUP BY e.type`;
+  const deposited = rows.find((r) => r.type === "INCREASE")?.value ?? 0;
+  const withdrawn = rows.find((r) => r.type === "DECREASE")?.value ?? 0;
+  return { deposited, withdrawn, currentValue, pnl: withdrawn + currentValue - deposited };
+}
+
+/** The last snapshot of each UTC day (the day's close), oldest first. */
+export async function dayCloseSnapshots(positionId: string): Promise<CloseSnapshot[]> {
+  return db().$queryRaw<CloseSnapshot[]>`
+    SELECT DISTINCT ON (date)
+      date, timestamp,
+      "rFeeIncome", "rGasCost", "rFeeReval", "rPriceEffect", "rIl",
+      "uPriceEffect", "uIl", "uFeeReval",
+      "realisedTotal", "unrealisedTotal", "totalPnl"
+    FROM "Snapshot"
+    WHERE "positionId" = ${positionId}
+    ORDER BY date, seq DESC`;
 }
 
 export async function intradayPoints(positionId: string, date: string): Promise<IntradayPointDto[]> {

@@ -108,7 +108,7 @@ export function Dashboard() {
   const selected = positions.find((p) => p.id === positionId) ?? null;
 
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+    <main className="w-full flex-1 px-4 py-6">
       <header className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold">Uniswap v3 LP P&amp;L</h1>

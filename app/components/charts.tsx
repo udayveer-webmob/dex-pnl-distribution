@@ -5,6 +5,7 @@ import {
   Brush,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Line,
   LineChart,
   ReferenceLine,
@@ -14,7 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import type { DailyRowDto, IntradayPointDto } from "@/lib/pnl/types";
-import { usd, usdCompact } from "@/lib/format";
+import { isIdleDaily, usd, usdCompact } from "@/lib/format";
 
 // ── Shared chrome ──────────────────────────────────────────────────────────
 
@@ -78,11 +79,20 @@ function TipBox({ title, rows }: { title: string; rows: TipRow[] }) {
   );
 }
 
+export function IdleTip({ title }: { title: string }) {
+  return (
+    <div className="rounded-md border border-line bg-surface px-3 py-2 text-xs shadow-sm">
+      <p className="mb-1 font-medium text-ink">{title}</p>
+      <p className="text-ink-2">○ No liquidity: the position held no tokens, so P&amp;L is $0.</p>
+    </div>
+  );
+}
+
 // ── Day-wise P&L breakdown (stacked by component, net P&L line) ────────────
 
 export const PNL_COMPONENTS: SeriesDef[] = [
   { key: "priceEffect", label: "Price effect (U)", color: "var(--series-1)" },
-  { key: "ilChange", label: "Impermanent loss Δ (U)", color: "var(--series-2)" },
+  { key: "ilChange", label: "Positional change P&L (U)", color: "var(--series-2)" },
   { key: "feeIncome", label: "Fee income (R)", color: "var(--series-3)" },
   { key: "feeReval", label: "Fee revaluation (U)", color: "var(--series-4)" },
   { key: "gasCost", label: "Gas (R)", color: "var(--series-5)" },
@@ -101,18 +111,21 @@ export function DailyPnlChart({
 }) {
   const series = includePriceEffect ? PNL_COMPONENTS : PNL_COMPONENTS.filter((s) => s.key !== "priceEffect");
   const data = rows.map((r) => {
-    const point: Record<string, number | string> = { date: r.date, ...r.daily };
-    point.net = includePriceEffect ? r.daily.pnl : r.daily.pnl - r.daily.priceEffect;
-    return point;
+    const idle = isIdleDaily(r.daily);
+    const net = includePriceEffect ? r.daily.pnl : r.daily.pnl - r.daily.priceEffect;
+    return { date: r.date, ...r.daily, net, idle, netLabel: idle ? "no liq." : usdCompact(net) };
   });
 
+  // Net labels only while they have room; with more days the tooltip carries the value.
+  const labelNet = data.length <= 31;
+
   return (
-    <div className="h-80 w-full">
+    <div className="h-96 w-full">
       <ResponsiveContainer>
         <ComposedChart
           data={data}
           stackOffset="sign"
-          margin={{ top: 8, right: 8, bottom: 0, left: 8 }}
+          margin={{ top: labelNet ? 24 : 8, right: 8, bottom: 0, left: 8 }}
           onClick={(state) => {
             const label = (state as { activeLabel?: string } | null)?.activeLabel;
             if (label) onSelectDate(String(label));
@@ -127,7 +140,8 @@ export function DailyPnlChart({
             cursor={{ fill: "var(--surface-2)" }}
             content={({ active, label, payload }) => {
               if (!active || !payload?.length) return null;
-              const p = payload[0].payload as Record<string, number>;
+              const p = payload[0].payload as Record<string, number> & { idle: boolean };
+              if (p.idle) return <IdleTip title={shortDate(String(label))} />;
               return (
                 <TipBox
                   title={shortDate(String(label))}
@@ -160,7 +174,16 @@ export function DailyPnlChart({
             dot={{ r: 4, fill: "var(--text-primary)", stroke: "var(--surface-1)", strokeWidth: 2 }}
             activeDot={{ r: 5, stroke: "var(--surface-1)", strokeWidth: 2 }}
             isAnimationActive={false}
-          />
+          >
+            {labelNet && (
+              <LabelList
+                dataKey="netLabel"
+                position="top"
+                offset={10}
+                style={{ fill: "var(--text-secondary)", fontSize: 11, fontVariantNumeric: "tabular-nums" }}
+              />
+            )}
+          </Line>
           {data.length > 60 && (
             <Brush dataKey="date" height={20} stroke="var(--axis)" fill="var(--surface-1)" tickFormatter={shortDate} startIndex={data.length - 60} />
           )}

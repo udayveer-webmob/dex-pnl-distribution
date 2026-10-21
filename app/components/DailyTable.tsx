@@ -2,12 +2,22 @@
 
 import { useState } from "react";
 import type { DailyRowDto } from "@/lib/pnl/types";
-import { usd } from "@/lib/format";
+import { bookedOf, isIdleDaily, usd } from "@/lib/format";
 
 type View = "daily" | "cumulative";
 
 const signed = (v: number) => (
-  <span className={v >= 0.005 ? "text-positive" : v <= -0.005 ? "text-negative" : "text-ink-2"}>{usd(v, true)}</span>
+  <span
+    className={
+      v >= 0.005
+        ? "text-positive"
+        : v <= -0.005
+          ? "text-negative"
+          : "text-ink-2"
+    }
+  >
+    {usd(v, true)}
+  </span>
 );
 
 const DAILY_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
@@ -16,8 +26,10 @@ const DAILY_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
   ["Gas (R)", (r) => signed(r.daily.gasCost)],
   ["Fee reval. (U)", (r) => signed(r.daily.feeReval)],
   ["Price effect (U)", (r) => signed(r.daily.priceEffect)],
-  ["IL change (U)", (r) => signed(r.daily.ilChange)],
+  ["Positional change P&L (U)", (r) => signed(r.daily.ilChange)],
   ["Capital in", (r) => usd(r.daily.capitalIn)],
+  ["Capital out", (r) => usd(r.daily.capitalOut)],
+  ["P&L booked", (r) => signed(bookedOf(r).total)],
   ["Daily P&L", (r) => <strong>{signed(r.daily.pnl)}</strong>],
   ["Closing NAV", (r) => usd(r.closingNav)],
 ];
@@ -26,12 +38,21 @@ const CUMULATIVE_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
   ["Fee income", (r) => signed(r.cumulative.realised.feeIncome)],
   ["Gas", (r) => signed(r.cumulative.realised.gasCost)],
   ["Realised fee reval.", (r) => signed(r.cumulative.realised.feeReval)],
-  ["Realised position P&L", (r) => signed(r.cumulative.realised.priceEffect + r.cumulative.realised.il)],
-  ["Cum. realised", (r) => <strong>{signed(r.cumulative.realised.total)}</strong>],
+  [
+    "Realised position P&L",
+    (r) => signed(r.cumulative.realised.priceEffect + r.cumulative.realised.il),
+  ],
+  [
+    "Cum. realised",
+    (r) => <strong>{signed(r.cumulative.realised.total)}</strong>,
+  ],
   ["Price effect", (r) => signed(r.cumulative.unrealised.priceEffect)],
-  ["IL", (r) => signed(r.cumulative.unrealised.il)],
+  ["Positional P&L", (r) => signed(r.cumulative.unrealised.il)],
   ["Fee reval.", (r) => signed(r.cumulative.unrealised.feeReval)],
-  ["Cum. unrealised", (r) => <strong>{signed(r.cumulative.unrealised.total)}</strong>],
+  [
+    "Cum. unrealised",
+    (r) => <strong>{signed(r.cumulative.unrealised.total)}</strong>,
+  ],
   ["Total P&L", (r) => <strong>{signed(r.cumulative.totalPnl)}</strong>],
 ];
 
@@ -50,7 +71,10 @@ export function DailyTable({
 
   return (
     <div>
-      <div className="mb-3 inline-flex rounded-md border border-line p-0.5 text-sm" role="tablist">
+      <div
+        className="mb-3 inline-flex rounded-md border border-line p-0.5 text-sm"
+        role="tablist"
+      >
         {(["daily", "cumulative"] as View[]).map((v) => (
           <button
             key={v}
@@ -69,7 +93,10 @@ export function DailyTable({
             <tr>
               <th className="px-2 py-2 text-left font-normal">Date</th>
               {columns.map(([label]) => (
-                <th key={label} className="whitespace-nowrap px-2 py-2 text-right font-normal">
+                <th
+                  key={label}
+                  className="whitespace-nowrap px-2 py-2 text-right font-normal"
+                >
                   {label}
                 </th>
               ))}
@@ -77,23 +104,40 @@ export function DailyTable({
             </tr>
           </thead>
           <tbody>
-            {[...rows].reverse().map((r) => (
-              <tr
-                key={r.date}
-                onClick={() => onSelectDate(r.date)}
-                className={`cursor-pointer border-t border-line hover:bg-surface-2 ${r.date === selectedDate ? "bg-surface-2" : ""}`}
-              >
-                <td className="whitespace-nowrap px-2 py-1.5">{r.date}</td>
-                {columns.map(([label, cell]) => (
-                  <td key={label} className="whitespace-nowrap px-2 py-1.5 text-right">
-                    {cell(r)}
+            {[...rows].reverse().map((r) => {
+              const idle = isIdleDaily(r.daily);
+              return (
+                <tr
+                  key={r.date}
+                  onClick={() => onSelectDate(r.date)}
+                  className={`cursor-pointer border-t border-line hover:bg-surface-2 ${r.date === selectedDate ? "bg-surface-2" : ""} ${idle ? "text-muted" : ""}`}
+                >
+                  <td className="whitespace-nowrap px-2 py-1.5">
+                    {r.date}
+                    {idle && (
+                      <span className="ml-2 rounded border border-line px-1.5 py-0.5 text-xs text-ink-2">
+                        ○ no liquidity
+                      </span>
+                    )}
                   </td>
-                ))}
-                <td className="whitespace-nowrap px-2 py-1.5 text-right text-xs">
-                  {r.checksOk ? <span className="text-good">✓ OK</span> : <span className="text-critical">▲ Mismatch</span>}
-                </td>
-              </tr>
-            ))}
+                  {columns.map(([label, cell]) => (
+                    <td
+                      key={label}
+                      className="whitespace-nowrap px-2 py-1.5 text-right"
+                    >
+                      {cell(r)}
+                    </td>
+                  ))}
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right text-xs">
+                    {r.checksOk ? (
+                      <span className="text-good">✓ OK</span>
+                    ) : (
+                      <span className="text-critical">▲ Mismatch</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

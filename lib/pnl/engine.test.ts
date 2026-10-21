@@ -134,15 +134,18 @@ describe("P&L engine – spec §8 worked example", () => {
   });
 
   it("matches §8.2 daily P&L", () => {
-    const rows: [StepResult, number, number, number, number, number, number, number, number][] = [
-      // open, fee, gas, reval, priceEffect, il, pnl, close
-      [d1, 10000, 3.0, -2.0, 0, -19.54, -0.36, -18.9, 9981.1],
-      [d2, 9981.1, 2.2, 0, -0.07, -254.48, -72.39, -324.74, 9656.36],
-      [d3, 9656.36, 2.08, 0, 0.1, 148.45, 57.69, 208.32, 9864.68],
-      [d4, 9864.68, 1.89, -1.5, 0.12, 169.66, 13.23, 183.4, 10048.08],
-      [d5, 10048.08, 1.62, -2.0, 0, -106.03, -1.82, -108.23, 9939.85],
+    // The spec keeps exited tokens in NAV; here they leave as capital out, so from the day-4
+    // collect onwards NAV is lower by the cumulative capital out (§8.2 + capitalOut).
+    const rows: [StepResult, number, number, number, number, number, number, number, number, number][] = [
+      // open, fee, gas, reval, priceEffect, il, pnl, capitalOut, close
+      [d1, 10000, 3.0, -2.0, 0, -19.54, -0.36, -18.9, 0, 9981.1],
+      [d2, 9981.1, 2.2, 0, -0.07, -254.48, -72.39, -324.74, 0, 9656.36],
+      [d3, 9656.36, 2.08, 0, 0.1, 148.45, 57.69, 208.32, 0, 9864.68],
+      [d4, 9864.68, 1.89, -1.5, 0.12, 169.66, 13.23, 183.4, 9.32, 10048.08 - 9.32],
+      [d5, 10048.08 - 9.32, 1.62, -2.0, 0, -106.03, -1.82, -108.23, 9934.4, 9939.85 - 9.32 - 9934.4],
     ];
-    for (const [x, open, fee, g, reval, pe, il, pnl, close] of rows) {
+    for (const [x, open, fee, g, reval, pe, il, pnl, out, close] of rows) {
+      near(x.interval.capitalOut, out, 0.05);
       near(x.navOpen, open, 0.05);
       near(x.interval.feeIncome, fee);
       near(x.interval.gasCost, g);

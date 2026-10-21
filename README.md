@@ -16,7 +16,7 @@ A single-page dashboard that tracks a wallet's Uniswap v3 positions on Ethereum 
 - **Prices**:
   - Pool price: read from `slot0` at the same block as the position.
   - USD price: from CoinGecko for one reference token, a stablecoin if the pool has one, otherwise WETH or WBTC. The other token's USD price comes from the pool price.
-- **NAV** is measured at the wallet level. Withdrawn principal and collected fees stay in NAV at their exit value, and gas is paid from the wallet.
+- **NAV** is what the position holds: liquidity value plus uncollected fees, minus the gas paid for it. Withdrawn principal and collected fees count as capital out at the moment they leave, so re-depositing the same funds doesn't inflate NAV. Total P&L = NAV − (capital in − capital out).
 
 ## Setup
 

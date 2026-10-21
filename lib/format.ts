@@ -45,4 +45,26 @@ export function price(v: number): string {
   return v.toPrecision(4);
 }
 
-export const feeTier = (fee: number) => `${(fee / 10000).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+/** Day range for the day-based charts: a number of UTC days ending today, or everything. */
+export type DayRange = 15 | 30 | 90 | "all";
+export const DAY_RANGES: DayRange[] = [15, 30, 90, "all"];
+
+export function inDayRange(date: string, range: DayRange): boolean {
+  if (range === "all") return true;
+  const from = new Date(Date.now() - (range - 1) * 86400_000).toISOString().slice(0, 10);
+  return date >= from;
+}
+
+/** True when a day has no P&L at all, i.e. the position held no liquidity that day. */
+export const isIdleDay = (components: Record<string, number>) =>
+  Object.values(components).every((v) => Math.abs(v) < 0.005);
+
+/** isIdleDay for a DailyRowDto's interval figures (capital flows are not P&L). */
+export const isIdleDaily = (d: { feeIncome: number; gasCost: number; feeReval: number; priceEffect: number; ilChange: number }) =>
+  isIdleDay({ a: d.feeIncome, b: d.gasCost, c: d.feeReval, e: d.priceEffect, f: d.ilChange });
+
+/** A row's booked P&L; zero when the row predates the field (e.g. data fetched before an update). */
+export const bookedOf = (r: { booked?: { total: number; position: number; fees: number } }) =>
+  r.booked ?? { total: 0, position: 0, fees: 0 };
+
+export const feeTier =(fee: number) => `${(fee / 10000).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;

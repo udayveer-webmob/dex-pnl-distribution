@@ -75,6 +75,12 @@ export interface DailyRowDto {
     capitalOut: number;
     pnl: number;
   };
+  /** P&L booked when assets leave the position: withdrawals (vs. their cost basis) and collected fees. Gas excluded. */
+  booked: {
+    total: number;
+    position: number;
+    fees: number;
+  };
   reclassified: {
     feeRevalToRealised: number;
     priceEffectToRealised: number;
@@ -102,7 +108,37 @@ export interface IntradayPointDto {
   usd1: number;
 }
 
+/** One day's P&L from its opening snapshot (previous day's close) and closing snapshot. */
+export interface DayPnlDto {
+  date: string;
+  openAt: string | null; // null on the first day: opens from zero, before the mint
+  closeAt: string;
+  openTotalPnl: number;
+  closeTotalPnl: number;
+  pnl: number;
+  components: {
+    feeIncome: number;
+    gasCost: number;
+    feeReval: number;
+    priceEffect: number;
+    positionalChange: number;
+  };
+  cumulative: { realised: number; unrealised: number; total: number };
+}
+
+/**
+ * Position P&L measured directly: principal withdrawn + current value − deposited, each valued in
+ * USD at the moment it moved. Fees and gas are excluded.
+ */
+export interface DirectPositionPnlDto {
+  deposited: number;
+  withdrawn: number;
+  currentValue: number;
+  pnl: number;
+}
+
 export interface PositionPnlDto {
   position: PositionSummaryDto;
   daily: DailyRowDto[];
+  direct: DirectPositionPnlDto;
 }

@@ -4,9 +4,9 @@
 // the pool and position at a block, and the liquidity events that happened right after it, and
 // returns the new state plus the P&L of the interval.
 //
-// NAV is measured at the wallet level: tokens that leave the position (withdrawn principal and
-// collected fees) stay in NAV at their exit value, and gas is paid from the wallet. Withdrawals
-// therefore move P&L from unrealised to realised but are not capital outflows.
+// NAV is what the position holds: liquidity value plus uncollected fees, less the gas paid for it.
+// Tokens that leave the position (withdrawn principal and collected fees) are capital outflows,
+// valued at the moment they leave, so re-depositing the same funds does not inflate NAV.
 
 import { positionAmounts, sqrtPriceFromX96, valueUsd } from "@/lib/uniswap/math";
 
@@ -76,9 +76,8 @@ export interface EngineState {
   earnedFees1: number;
   owedPrincipal0: number; // withdrawn principal still sitting in tokensOwed
   owedPrincipal1: number;
-  exitedValue: number; // USD value of tokens that left the position, at exit prices
   capitalIn: number;
-  capitalOut: number;
+  capitalOut: number; // USD value of tokens that left the position, at exit prices
   realised: RealisedTotals;
   unrealised: UnrealisedTotals;
 }
@@ -142,7 +141,6 @@ export function initialState(): EngineState {
     earnedFees1: 0,
     owedPrincipal0: 0,
     owedPrincipal1: 0,
-    exitedValue: 0,
     capitalIn: 0,
     capitalOut: 0,
     realised: { feeIncome: 0, gasCost: 0, feeReval: 0, priceEffect: 0, il: 0 },
@@ -152,7 +150,7 @@ export function initialState(): EngineState {
 
 export const heldFeesValue = (s: EngineState) => s.heldFees0 * s.usd0 + s.heldFees1 * s.usd1;
 export const hodlValue = (s: EngineState) => s.hodl0 * s.usd0 + s.hodl1 * s.usd1;
-export const nav = (s: EngineState) => s.value + heldFeesValue(s) + s.exitedValue + s.realised.gasCost;
+export const nav = (s: EngineState) => s.value + heldFeesValue(s) + s.realised.gasCost;
 export const realisedTotal = (s: EngineState) =>
   s.realised.feeIncome + s.realised.gasCost + s.realised.feeReval + s.realised.priceEffect + s.realised.il;
 export const unrealisedFeeReval = (s: EngineState) => s.unrealised.feeReval0 + s.unrealised.feeReval1;
@@ -284,7 +282,8 @@ export function step(
       s.costBasis *= 1 - f;
       s.owedPrincipal0 += e.amount0;
       s.owedPrincipal1 += e.amount1;
-      s.exitedValue += withdrawn;
+      s.capitalOut += withdrawn;
+      iv.capitalOut += withdrawn;
     } else if (e.kind === "collect") {
       // Principal comes out first; anything above it is fees.
       const p0 = Math.min(e.amount0, Math.max(s.owedPrincipal0, 0));
@@ -344,7 +343,8 @@ function collectFees(
 
   if (token === 0) s.heldFees0 = held + extra - amount;
   else s.heldFees1 = held + extra - amount;
-  s.exitedValue += amount * usd;
+  s.capitalOut += amount * usd;
+  iv.capitalOut += amount * usd;
 }
 
 function runChecks(

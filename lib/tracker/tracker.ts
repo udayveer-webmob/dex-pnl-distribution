@@ -1,6 +1,7 @@
 // Drives the P&L engine for one position: replays history as daily checkpoints (split at every
-// liquidity event), then appends a live POLL snapshot at the chain head. The same routine runs
-// for the first backfill and for every 2-minute poll; it always resumes from Position.state.
+// liquidity event). The same routine runs for the first backfill and for every worker run; it always
+// resumes from Position.state. Live POLL snapshots at the chain head are disabled (see buildCheckpoints),
+// so a run that crosses no day end and sees no event writes nothing.
 
 import type { Address } from "viem";
 import { db } from "@/lib/db";
@@ -146,7 +147,7 @@ async function dayEndBlocks(fromTs: number, toTs: number, head: bigint, progress
   return blocks;
 }
 
-function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[], head: bigint): Checkpoint[] {
+function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[] /* , head: bigint */): Checkpoint[] {
   const byBlock = new Map<bigint, RawPositionEvent[]>();
   for (const e of events) byBlock.set(e.block, [...(byBlock.get(e.block) ?? []), e]);
 
@@ -157,8 +158,11 @@ function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[], head: b
   // At the same block the event goes first, so the day-end read sees post-event liquidity.
   cps.sort((a, b) => (a.block === b.block ? (a.kind === "EVENT" ? -1 : 1) : a.block < b.block ? -1 : 1));
 
-  const last = cps[cps.length - 1];
-  if (!last || last.block < head) cps.push({ kind: "POLL", block: head, obsBlock: head, events: [] });
+  // Intraday POLL snapshots are disabled: only day-end (DAILY) and liquidity-event (EVENT) snapshots
+  // are written. To snapshot the chain head on every worker run again, restore the `head` parameter
+  // (and pass it at the call site) and uncomment:
+  // const last = cps[cps.length - 1];
+  // if (!last || last.block < head) cps.push({ kind: "POLL", block: head, obsBlock: head, events: [] });
   return cps;
 }
 
@@ -191,7 +195,7 @@ export async function advancePosition(
   const checkpoints = buildCheckpoints(
     events,
     dayEnds.filter((b) => b > lastBlock!),
-    head,
+    // head, (intraday POLL snapshots disabled)
   );
 
   const meta = metaOf(p);
