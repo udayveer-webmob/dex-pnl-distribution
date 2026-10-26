@@ -92,7 +92,7 @@ export function IdleTip({ title }: { title: string }) {
 
 export const PNL_COMPONENTS: SeriesDef[] = [
   { key: "priceEffect", label: "Price effect (U)", color: "var(--series-1)" },
-  { key: "ilChange", label: "Positional change P&L (U)", color: "var(--series-2)" },
+  { key: "ilChange", label: "IL change (U)", color: "var(--series-2)" },
   { key: "feeIncome", label: "Fee income (R)", color: "var(--series-3)" },
   { key: "feeReval", label: "Fee revaluation (U)", color: "var(--series-4)" },
   { key: "gasCost", label: "Gas (R)", color: "var(--series-5)" },

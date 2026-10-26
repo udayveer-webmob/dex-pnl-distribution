@@ -15,6 +15,7 @@ import {
 } from "./charts";
 import { DailyTable } from "./DailyTable";
 import { DayPnlCharts } from "./DayPnlCharts";
+import { LivePanel } from "./LivePanel";
 import { Progress } from "./Progress";
 
 const CUMULATIVE: SeriesDef[] = [
@@ -27,7 +28,7 @@ const POSITION_HODL: SeriesDef[] = [
   { key: "hodl", label: "HODL value (deposit held)", color: "var(--series-2)" },
 ];
 
-function Tile({ label, value, tone, sub }: { label: string; value: string; tone?: "pos" | "neg"; sub?: string }) {
+function Tile({ label, value, tone, sub }: { label: string; value: string; tone?: "pos" | "neg"; sub?: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-line bg-surface p-3">
       <p className="text-xs text-ink-2">{label}</p>
@@ -107,10 +108,10 @@ function download(name: string, content: string, type: string) {
 
 function toCsv(rows: DailyRowDto[]): string {
   const header = [
-    "date", "openingNav", "closingNav", "feeIncome", "gasCost", "feeReval", "priceEffect", "positionalChangePnl", "capitalIn", "capitalOut", "pnlBooked", "pnl",
+    "date", "openingNav", "closingNav", "feeIncome", "gasCost", "feeReval", "priceEffect", "ilChange", "capitalIn", "capitalOut", "pnlBooked", "pnl",
     "feeRevalToRealised", "priceEffectToRealised", "ilToRealised",
-    "cumRealisedFeeIncome", "cumRealisedGas", "cumRealisedFeeReval", "cumRealisedPriceEffect", "cumRealisedPositionalPnl", "cumRealised",
-    "cumUnrealisedPriceEffect", "cumUnrealisedPositionalPnl", "cumUnrealisedFeeReval", "cumUnrealised", "totalPnl",
+    "cumRealisedFeeIncome", "cumRealisedGas", "cumRealisedFeeReval", "cumRealisedPriceEffect", "cumRealisedIl", "cumRealised",
+    "cumUnrealisedPriceEffect", "cumUnrealisedIl", "cumUnrealisedFeeReval", "cumUnrealised", "totalPnl",
     "positionValue", "hodlValue", "heldFeesValue", "costBasis", "checksOk",
   ];
   const lines = rows.map((r) =>
@@ -174,11 +175,12 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
   const [lo, hi] = priceRange(summary.pool, summary.tickLower, summary.tickUpper);
   const last = rows[rows.length - 1];
   const dayRow = rows.find((r) => r.date === day) ?? null;
-  // Price effect is a hold-the-deposit benchmark; positional P&L takes back what the range didn't capture.
+  // Price effect is a hold-the-deposit benchmark; IL takes back what the range didn't capture.
   // Their sum is what the liquidity itself gained or lost.
   const pricePnl = last ? last.cumulative.realised.priceEffect + last.cumulative.unrealised.priceEffect : 0;
   const positionalPnl = last ? last.cumulative.realised.il + last.cumulative.unrealised.il : 0;
   const positionPnl = pricePnl + positionalPnl;
+  const feeRevalPnl = last ? last.cumulative.realised.feeReval + last.cumulative.unrealised.feeReval : 0;
   const bookedToDate = rows.filter((r) => !day || r.date <= day).reduce((sum, r) => sum + bookedOf(r).total, 0);
   const dayBooked = dayRow ? bookedOf(dayRow) : null;
 
@@ -212,6 +214,8 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
         )
       ) : (
         <>
+          <LivePanel positionId={summary.id} pool={summary.pool} />
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted">Day-based charts show every UTC day in the range, including days without liquidity.</p>
             <RangePicker value={range} onChange={setRange} />
@@ -243,27 +247,42 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
             />
           </Card>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <Tile label="NAV" value={usd(last.closingNav)} sub={`net capital in ${usd(last.cumulative.netCapital)}`} />
             <Tile label="Total P&L" value={usd(last.cumulative.totalPnl, true)} tone={tone(last.cumulative.totalPnl)} />
             <Tile
               label="Total P&L excl. price effect"
               value={usd(last.cumulative.totalPnl - pricePnl, true)}
               tone={tone(last.cumulative.totalPnl - pricePnl)}
-              sub="fees + fee reval. + positional + gas"
+              sub={`total ${usd(last.cumulative.totalPnl, true)} − price effect ${usd(pricePnl, true)}`}
             />
             <SplitTile
               label="Realised / unrealised"
               rows={[
                 ["Realised", last.cumulative.realised.total],
+                ["Realised excl. price", last.cumulative.realised.total - last.cumulative.realised.priceEffect],
                 ["Unrealised", last.cumulative.unrealised.total],
+                ["Unrealised excl. price", last.cumulative.unrealised.total - last.cumulative.unrealised.priceEffect],
               ]}
             />
+            <Tile label="Total fee income" value={usd(last.cumulative.realised.feeIncome, true)} tone={tone(last.cumulative.realised.feeIncome)} />
+            <Tile label="Total gas" value={usd(last.cumulative.realised.gasCost, true)} tone={tone(last.cumulative.realised.gasCost)} />
             <Tile
-              label="Position P&L"
+              label="Fee revaluation"
+              value={usd(feeRevalPnl, true)}
+              tone={tone(feeRevalPnl)}
+              sub={`realised ${usd(last.cumulative.realised.feeReval, true)} · unrealised ${usd(last.cumulative.unrealised.feeReval, true)}`}
+            />
+            <Tile
+              label="Positional P&L"
               value={usd(positionPnl, true)}
               tone={tone(positionPnl)}
-              sub={`price ${usd(pricePnl, true)} · positional ${usd(positionalPnl, true)}`}
+              sub={
+                <>
+                  <span className="block">price effect {usd(pricePnl, true)}</span>
+                  <span className="block">IL {usd(positionalPnl, true)}</span>
+                </>
+              }
             />
             {data?.direct && (
               <Tile
@@ -273,14 +292,6 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
                 sub={`withdrawn ${usdCompact(data.direct.withdrawn)} + value now ${usdCompact(data.direct.currentValue)} − deposited ${usdCompact(data.direct.deposited)}`}
               />
             )}
-            <Tile label="Fees earned" value={usd(last.cumulative.realised.feeIncome, true)} tone={tone(last.cumulative.realised.feeIncome)} />
-            <Tile
-              label="Positional P&L"
-              value={usd(last.cumulative.realised.il + last.cumulative.unrealised.il, true)}
-              tone={tone(last.cumulative.realised.il + last.cumulative.unrealised.il)}
-              sub={`unrealised ${usd(last.cumulative.unrealised.il, true)}`}
-            />
-            <Tile label="Gas" value={usd(last.cumulative.realised.gasCost, true)} tone={tone(last.cumulative.realised.gasCost)} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -299,7 +310,7 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
                 }))}
               />
             </Card>
-            <Card title="Position vs HODL" subtitle="Liquidity value against holding the deposited tokens; the gap is unrealised positional P&L">
+            <Card title="Position vs HODL" subtitle="Liquidity value against holding the deposited tokens; the gap is unrealised IL">
               <div className="mb-2">
                 <Legend series={POSITION_HODL} />
               </div>

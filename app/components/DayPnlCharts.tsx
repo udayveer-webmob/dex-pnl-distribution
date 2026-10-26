@@ -32,7 +32,7 @@ const utcTime = (iso: string) => `${shortDate(iso.slice(0, 10))} ${iso.slice(11,
 
 const COMPONENTS: [keyof DayPnlDto["components"], string][] = [
   ["priceEffect", "Price effect"],
-  ["positionalChange", "Positional change P&L"],
+  ["positionalChange", "IL change"],
   ["feeIncome", "Fee income"],
   ["feeReval", "Fee revaluation"],
   ["gasCost", "Gas"],

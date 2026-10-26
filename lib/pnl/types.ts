@@ -137,6 +137,43 @@ export interface DirectPositionPnlDto {
   pnl: number;
 }
 
+/** Cumulative (or period) P&L split into its components. */
+export interface PnlBreakdownDto {
+  total: number;
+  feeIncome: number;
+  gasCost: number;
+  feeReval: number;
+  priceEffect: number;
+  il: number;
+}
+
+/** Live P&L at the chain head, computed on request and not stored. */
+export interface LivePnlDto {
+  asOf: string;
+  block: string;
+  status: PositionStatus;
+  /** Liquidity events / day ends since the last stored snapshot (the worker records them later). */
+  unrecordedEvents: number;
+  unrecordedDays: number;
+  usd0: number;
+  usd1: number;
+  inRange: boolean;
+  amount0: number;
+  amount1: number;
+  positionValue: number;
+  heldFees0: number;
+  heldFees1: number;
+  heldFeesValue: number;
+  nav: number;
+  netCapital: number;
+  realised: number;
+  unrealised: number;
+  totals: PnlBreakdownDto;
+  today: PnlBreakdownDto & { date: string };
+  sinceLastSnapshot: PnlBreakdownDto;
+  checksOk: boolean;
+}
+
 export interface PositionPnlDto {
   position: PositionSummaryDto;
   daily: DailyRowDto[];

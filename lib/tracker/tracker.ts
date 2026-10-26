@@ -23,7 +23,7 @@ import {
 import { deriveUsdPrices, sqrtPriceFromX96, toHuman } from "@/lib/uniswap/math";
 import { snapshotRow } from "./snapshot";
 
-type TrackedPosition = Position & { pool: Pool };
+export type TrackedPosition = Position & { pool: Pool };
 
 export const STEPS = ["Fetching liquidity events", "Fetching gas receipts", "Finding day boundaries", "Replaying snapshots"] as const;
 
@@ -32,21 +32,23 @@ export type ProgressFn = (step: number, done: number, total: number | null) => v
 
 const noProgress: ProgressFn = () => {};
 
-interface Checkpoint {
+type GasMap = Map<string, { gasUsed: bigint; effectiveGasPrice: bigint }>;
+
+export interface Checkpoint {
   kind: SnapshotKind;
   block: bigint; // block the snapshot is labelled with
   obsBlock: bigint; // block the pool/position is read at (block − 1 for events)
   events: RawPositionEvent[];
 }
 
-const metaOf = (p: TrackedPosition): PositionMeta => ({
+export const metaOf = (p: TrackedPosition): PositionMeta => ({
   tickLower: p.tickLower,
   tickUpper: p.tickUpper,
   decimals0: p.pool.token0Decimals,
   decimals1: p.pool.token1Decimals,
 });
 
-async function observe(p: TrackedPosition, block: bigint) {
+export async function observe(p: TrackedPosition, block: bigint) {
   const read = await readPoolPosition(
     p.pool.address as Address,
     BigInt(p.tokenId),
@@ -82,7 +84,7 @@ async function observe(p: TrackedPosition, block: bigint) {
 }
 
 /** Engine events for one block; gas is charged once per transaction. */
-async function toEngineEvents(p: TrackedPosition, raw: RawPositionEvent[]): Promise<LiquidityEvent[]> {
+function toEngineEvents(p: TrackedPosition, raw: RawPositionEvent[], gas: GasMap): LiquidityEvent[] {
   const d0 = p.pool.token0Decimals;
   const d1 = p.pool.token1Decimals;
   const out: LiquidityEvent[] = [];
@@ -96,25 +98,26 @@ async function toEngineEvents(p: TrackedPosition, raw: RawPositionEvent[]): Prom
 
     if (!charged.has(e.txHash)) {
       charged.add(e.txHash);
-      const stored = await db().positionEvent.findUnique({
-        where: { txHash_logIndex: { txHash: e.txHash, logIndex: e.logIndex } },
-      });
-      const gasUsed = BigInt(stored?.gasUsed ?? 0);
-      const price = BigInt(stored?.effectiveGasPrice ?? 0);
-      out.push({ kind: "gas", gasEth: Number(gasUsed * price) / 1e18 });
+      const g = gas.get(e.txHash);
+      out.push({ kind: "gas", gasEth: g ? Number(g.gasUsed * g.effectiveGasPrice) / 1e18 : 0 });
     }
   }
   return out;
 }
 
-async function storeEvents(p: TrackedPosition, events: RawPositionEvent[], progress: ProgressFn) {
-  const receipts = new Map<string, { gasUsed: bigint; effectiveGasPrice: bigint }>();
+/** Gas used by each transaction that emitted one of `events`, from the receipts. */
+export async function fetchGas(events: RawPositionEvent[], progress: ProgressFn = noProgress): Promise<GasMap> {
+  const receipts: GasMap = new Map();
   const txCount = new Set(events.map((e) => e.txHash)).size;
   for (const e of events) {
     if (receipts.has(e.txHash)) continue;
     receipts.set(e.txHash, await txGas(e.txHash));
     await progress(1, receipts.size, txCount);
   }
+  return receipts;
+}
+
+async function storeEvents(p: TrackedPosition, events: RawPositionEvent[], receipts: GasMap) {
   const data = [];
   for (const e of events) {
     const gas = receipts.get(e.txHash)!;
@@ -136,7 +139,12 @@ async function storeEvents(p: TrackedPosition, events: RawPositionEvent[], progr
 }
 
 /** Last block of each UTC day that ends in (fromTs, toTs]. */
-async function dayEndBlocks(fromTs: number, toTs: number, head: bigint, progress: ProgressFn): Promise<bigint[]> {
+export async function dayEndBlocks(
+  fromTs: number,
+  toTs: number,
+  head: bigint,
+  progress: ProgressFn = noProgress,
+): Promise<bigint[]> {
   const blocks: bigint[] = [];
   const first = (Math.floor(fromTs / 86400) + 1) * 86400;
   const total = Math.max(0, Math.floor((toTs - first) / 86400) + 1);
@@ -147,7 +155,7 @@ async function dayEndBlocks(fromTs: number, toTs: number, head: bigint, progress
   return blocks;
 }
 
-function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[] /* , head: bigint */): Checkpoint[] {
+export function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[] /* , head: bigint */): Checkpoint[] {
   const byBlock = new Map<bigint, RawPositionEvent[]>();
   for (const e of events) byBlock.set(e.block, [...(byBlock.get(e.block) ?? []), e]);
 
@@ -164,6 +172,34 @@ function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[] /* , hea
   // const last = cps[cps.length - 1];
   // if (!last || last.block < head) cps.push({ kind: "POLL", block: head, obsBlock: head, events: [] });
   return cps;
+}
+
+export interface ReplayStep {
+  cp: Checkpoint;
+  ts: number; // timestamp of the checkpoint's block
+  inRange: boolean;
+  read: Awaited<ReturnType<typeof observe>>["read"];
+  result: ReturnType<typeof step>;
+}
+
+/** Run the engine through `checkpoints` from `state`, one observation per checkpoint. Writes nothing. */
+export async function* replay(
+  p: TrackedPosition,
+  state: EngineState,
+  checkpoints: Checkpoint[],
+  gas: GasMap,
+  progress: ProgressFn = noProgress,
+): AsyncGenerator<ReplayStep> {
+  const meta = metaOf(p);
+  for (const [i, cp] of checkpoints.entries()) {
+    await progress(3, i, checkpoints.length);
+    const { obs, read } = await observe(p, cp.obsBlock);
+    const result = step(state, meta, obs, toEngineEvents(p, cp.events, gas));
+    state = result.state;
+    const ts = cp.block === cp.obsBlock ? obs.timestamp : await blockTimestamp(cp.block);
+    yield { cp, ts, inRange: obs.tick >= p.tickLower && obs.tick < p.tickUpper, read, result };
+  }
+  await progress(3, checkpoints.length, checkpoints.length);
 }
 
 /** Bring a tracked position up to `head`. Returns true when the position is fully closed. */
@@ -189,7 +225,8 @@ export async function advancePosition(
     events = await fetchPositionEvents(tokenId, lastBlock + 1n, head);
   }
   await progress(0, events.length, events.length);
-  await storeEvents(p, events, progress);
+  const gas = await fetchGas(events, progress);
+  await storeEvents(p, events, gas);
 
   const dayEnds = await dayEndBlocks(await blockTimestamp(lastBlock), await blockTimestamp(head), head, progress);
   const checkpoints = buildCheckpoints(
@@ -198,17 +235,10 @@ export async function advancePosition(
     // head, (intraday POLL snapshots disabled)
   );
 
-  const meta = metaOf(p);
-  let lastRead: Awaited<ReturnType<typeof observe>>["read"] | null = null;
-  for (const [i, cp] of checkpoints.entries()) {
-    await progress(3, i, checkpoints.length);
-    const { obs, read } = await observe(p, cp.obsBlock);
+  let lastRead: ReplayStep["read"] | null = null;
+  for await (const { cp, ts, inRange, read, result } of replay(p, state, checkpoints, gas, progress)) {
     lastRead = read;
-    const result = step(state, meta, obs, await toEngineEvents(p, cp.events));
     state = result.state;
-
-    const ts = cp.block === cp.obsBlock ? obs.timestamp : await blockTimestamp(cp.block);
-    const inRange = obs.tick >= p.tickLower && obs.tick < p.tickUpper;
     await db().$transaction([
       db().snapshot.create({ data: snapshotRow(p.id, cp.kind, cp.block, ts, inRange, result) }),
       db().position.update({
@@ -217,7 +247,6 @@ export async function advancePosition(
       }),
     ]);
   }
-  await progress(3, checkpoints.length, checkpoints.length);
 
   return state.liquidity === "0" && lastRead !== null && lastRead.owed0 === 0n && lastRead.owed1 === 0n;
 }

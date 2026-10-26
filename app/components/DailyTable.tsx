@@ -26,7 +26,7 @@ const DAILY_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
   ["Gas (R)", (r) => signed(r.daily.gasCost)],
   ["Fee reval. (U)", (r) => signed(r.daily.feeReval)],
   ["Price effect (U)", (r) => signed(r.daily.priceEffect)],
-  ["Positional change P&L (U)", (r) => signed(r.daily.ilChange)],
+  ["IL change (U)", (r) => signed(r.daily.ilChange)],
   ["Capital in", (r) => usd(r.daily.capitalIn)],
   ["Capital out", (r) => usd(r.daily.capitalOut)],
   ["P&L booked", (r) => signed(bookedOf(r).total)],
@@ -47,7 +47,7 @@ const CUMULATIVE_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
     (r) => <strong>{signed(r.cumulative.realised.total)}</strong>,
   ],
   ["Price effect", (r) => signed(r.cumulative.unrealised.priceEffect)],
-  ["Positional P&L", (r) => signed(r.cumulative.unrealised.il)],
+  ["IL", (r) => signed(r.cumulative.unrealised.il)],
   ["Fee reval.", (r) => signed(r.cumulative.unrealised.feeReval)],
   [
     "Cum. unrealised",
