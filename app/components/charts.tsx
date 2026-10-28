@@ -90,26 +90,21 @@ export function IdleTip({ title }: { title: string }) {
 
 // ── Day-wise P&L breakdown (stacked by component, net P&L line) ────────────
 
-export const PNL_COMPONENTS: SeriesDef[] = [
-  { key: "priceEffect", label: "Price effect (U)", color: "var(--series-1)" },
-  { key: "ilChange", label: "IL change (U)", color: "var(--series-2)" },
-  { key: "feeIncome", label: "Fee income (R)", color: "var(--series-3)" },
-  { key: "feeReval", label: "Fee revaluation (U)", color: "var(--series-4)" },
-  { key: "gasCost", label: "Gas (R)", color: "var(--series-5)" },
-];
-
 export function DailyPnlChart({
   rows,
+  components,
   includePriceEffect,
   selectedDate,
   onSelectDate,
 }: {
   rows: DailyRowDto[];
+  /** Protocol's components in colour order (lib/protocol.ts). */
+  components: SeriesDef[];
   includePriceEffect: boolean;
   selectedDate: string | null;
   onSelectDate: (date: string) => void;
 }) {
-  const series = includePriceEffect ? PNL_COMPONENTS : PNL_COMPONENTS.filter((s) => s.key !== "priceEffect");
+  const series = includePriceEffect ? components : components.filter((s) => s.key !== "priceEffect");
   const data = rows.map((r) => {
     const idle = isIdleDaily(r.daily);
     const net = includePriceEffect ? r.daily.pnl : r.daily.pnl - r.daily.priceEffect;

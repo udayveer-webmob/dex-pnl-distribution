@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 import { chain } from "@/lib/chain/client";
 import { ConfigError, missingEnv, pollIntervalMs } from "@/lib/env";
 import { Prisma } from "@/lib/generated/prisma/client";
-import { STEPS, advancePosition, type ProgressFn } from "@/lib/tracker/tracker";
+import { STEPS, advancePosition, type ProgressFn } from "@/lib/tracker";
 import type { ProgressDto } from "@/lib/pnl/types";
 
 const TICK_MS = 5_000;

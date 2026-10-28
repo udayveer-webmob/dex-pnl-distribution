@@ -25,6 +25,7 @@
   --series-3: #1baf7a;
   --series-4: #eda100;
   --series-5: #e87ba4;
+  --series-6: #008300;
 
   /* Diverging pair: gain / loss */
   --gain: #2a78d6;
@@ -51,6 +52,7 @@
     --series-3: #199e70;
     --series-4: #c98500;
     --series-5: #d55181;
+    --series-6: #008300;
     --gain: #3987e5;
     --loss: #e66767;
   }
@@ -75,6 +77,7 @@
   --series-3: #199e70;
   --series-4: #c98500;
   --series-5: #d55181;
+  --series-6: #008300;
   --gain: #3987e5;
   --loss: #e66767;
 }

@@ -23,9 +23,17 @@ import {
 import { deriveUsdPrices, sqrtPriceFromX96, toHuman } from "@/lib/uniswap/math";
 import { snapshotRow } from "./snapshot";
 
-export type TrackedPosition = Position & { pool: Pool };
+/** A Uniswap v3 position with its pool and range (fields that are optional on Position). */
+export type TrackedPosition = Position & { pool: Pool; poolAddress: string; tickLower: number; tickUpper: number };
 
-export const STEPS = ["Fetching liquidity events", "Fetching gas receipts", "Finding day boundaries", "Replaying snapshots"] as const;
+export function asUniswap(p: Position & { pool: Pool | null }): TrackedPosition {
+  if (p.protocol !== "UNISWAP_V3" || !p.pool || p.poolAddress === null || p.tickLower === null || p.tickUpper === null) {
+    throw new Error(`Position ${p.id} is not a Uniswap v3 position`);
+  }
+  return p as TrackedPosition;
+}
+
+export const STEPS = ["Fetching position events", "Fetching gas receipts", "Finding day boundaries", "Replaying snapshots"] as const;
 
 /** Called as work progresses: `step` is an index into STEPS, `total` is null when unknown. */
 export type ProgressFn = (step: number, done: number, total: number | null) => void | Promise<void>;
@@ -34,11 +42,11 @@ const noProgress: ProgressFn = () => {};
 
 type GasMap = Map<string, { gasUsed: bigint; effectiveGasPrice: bigint }>;
 
-export interface Checkpoint {
+export interface Checkpoint<E = RawPositionEvent> {
   kind: SnapshotKind;
   block: bigint; // block the snapshot is labelled with
   obsBlock: bigint; // block the pool/position is read at (block − 1 for events)
-  events: RawPositionEvent[];
+  events: E[];
 }
 
 export const metaOf = (p: TrackedPosition): PositionMeta => ({
@@ -155,13 +163,16 @@ export async function dayEndBlocks(
   return blocks;
 }
 
-export function buildCheckpoints(events: RawPositionEvent[], dayEnds: bigint[] /* , head: bigint */): Checkpoint[] {
-  const byBlock = new Map<bigint, RawPositionEvent[]>();
+export function buildCheckpoints<E extends { block: bigint }>(
+  events: E[],
+  dayEnds: bigint[] /* , head: bigint */,
+): Checkpoint<E>[] {
+  const byBlock = new Map<bigint, E[]>();
   for (const e of events) byBlock.set(e.block, [...(byBlock.get(e.block) ?? []), e]);
 
-  const cps: Checkpoint[] = [
+  const cps: Checkpoint<E>[] = [
     ...[...byBlock].map(([block, evs]) => ({ kind: "EVENT" as const, block, obsBlock: block - 1n, events: evs })),
-    ...dayEnds.map((block) => ({ kind: "DAILY" as const, block, obsBlock: block, events: [] })),
+    ...dayEnds.map((block) => ({ kind: "DAILY" as const, block, obsBlock: block, events: [] as E[] })),
   ];
   // At the same block the event goes first, so the day-end read sees post-event liquidity.
   cps.sort((a, b) => (a.block === b.block ? (a.kind === "EVENT" ? -1 : 1) : a.block < b.block ? -1 : 1));
@@ -202,13 +213,13 @@ export async function* replay(
   await progress(3, checkpoints.length, checkpoints.length);
 }
 
-/** Bring a tracked position up to `head`. Returns true when the position is fully closed. */
-export async function advancePosition(
+/** Bring a tracked Uniswap v3 position up to `head`. Returns true when the position is fully closed. */
+export async function advanceUniswap(
   positionId: string,
   head: bigint,
   progress: ProgressFn = noProgress,
 ): Promise<boolean> {
-  const p = await db().position.findUniqueOrThrow({ where: { id: positionId }, include: { pool: true } });
+  const p = asUniswap(await db().position.findUniqueOrThrow({ where: { id: positionId }, include: { pool: true } }));
   const tokenId = BigInt(p.tokenId);
   let state: EngineState = (p.state as unknown as EngineState | null) ?? initialState();
   let lastBlock = p.lastBlock;

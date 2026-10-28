@@ -8,7 +8,6 @@ import {
   DailyLinesChart,
   DailyPnlChart,
   Legend,
-  PNL_COMPONENTS,
   type SeriesDef,
   intradaySeriesData,
   timeOfDay,
@@ -17,6 +16,7 @@ import { DailyTable } from "./DailyTable";
 import { DayPnlCharts } from "./DayPnlCharts";
 import { LivePanel } from "./LivePanel";
 import { Progress } from "./Progress";
+import { dailyComponents, incomeLabel } from "@/lib/protocol";
 
 const CUMULATIVE: SeriesDef[] = [
   { key: "realised", label: "Realised", color: "var(--series-1)" },
@@ -36,6 +36,36 @@ function Tile({ label, value, tone, sub }: { label: string; value: string; tone?
         {value}
       </p>
       {sub && <p className="text-xs text-muted">{sub}</p>}
+    </div>
+  );
+}
+
+function PositionHeader({ summary, lastSnapshotAt }: { summary: PositionSummaryDto; lastSnapshotAt?: string }) {
+  const snapshot = lastSnapshotAt && <> · last snapshot {new Date(lastSnapshotAt).toLocaleString()}</>;
+  if (summary.compound) {
+    return (
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">
+          {summary.compound.name} supply{" "}
+          <span className="font-mono text-sm font-normal text-muted">{summary.compound.comet}</span>
+        </h2>
+        <p className="tnum text-xs text-muted">Supplying {summary.compound.baseSymbol} for interest{snapshot}</p>
+      </div>
+    );
+  }
+  if (!summary.pool || summary.tickLower === null || summary.tickUpper === null) return null;
+  const { base, quote } = pairLabel(summary.pool);
+  const [lo, hi] = priceRange(summary.pool, summary.tickLower, summary.tickUpper);
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 className="text-lg font-semibold">
+        {base} / {quote} {feeTier(summary.pool.fee)}{" "}
+        <span className="font-mono text-sm font-normal text-muted">#{summary.tokenId}</span>
+      </h2>
+      <p className="tnum text-xs text-muted">
+        Range {price(lo)} – {price(hi)} {quote}
+        {snapshot}
+      </p>
     </div>
   );
 }
@@ -108,7 +138,8 @@ function download(name: string, content: string, type: string) {
 
 function toCsv(rows: DailyRowDto[]): string {
   const header = [
-    "date", "openingNav", "closingNav", "feeIncome", "gasCost", "feeReval", "priceEffect", "ilChange", "capitalIn", "capitalOut", "pnlBooked", "pnl",
+    "date", "openingNav", "closingNav", "feeIncome", "gasCost", "feeReval", "priceEffect", "ilChange", "rewardIncome", "rewardReval",
+    "capitalIn", "capitalOut", "pnlBooked", "pnl",
     "feeRevalToRealised", "priceEffectToRealised", "ilToRealised",
     "cumRealisedFeeIncome", "cumRealisedGas", "cumRealisedFeeReval", "cumRealisedPriceEffect", "cumRealisedIl", "cumRealised",
     "cumUnrealisedPriceEffect", "cumUnrealisedIl", "cumUnrealisedFeeReval", "cumUnrealised", "totalPnl",
@@ -117,6 +148,7 @@ function toCsv(rows: DailyRowDto[]): string {
   const lines = rows.map((r) =>
     [
       r.date, r.openingNav, r.closingNav, r.daily.feeIncome, r.daily.gasCost, r.daily.feeReval, r.daily.priceEffect, r.daily.ilChange,
+      r.daily.rewardIncome, r.daily.rewardReval,
       r.daily.capitalIn, r.daily.capitalOut, bookedOf(r).total, r.daily.pnl,
       r.reclassified.feeRevalToRealised, r.reclassified.priceEffectToRealised, r.reclassified.ilToRealised,
       r.cumulative.realised.feeIncome, r.cumulative.realised.gasCost, r.cumulative.realised.feeReval, r.cumulative.realised.priceEffect,
@@ -171,8 +203,9 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
     };
   }, [summary.id, day, lastSnapshotAt]);
 
-  const { base, quote } = pairLabel(summary.pool);
-  const [lo, hi] = priceRange(summary.pool, summary.tickLower, summary.tickUpper);
+  const isCompound = summary.protocol === "COMPOUND_V3";
+  const components = dailyComponents(summary.protocol);
+  const income = incomeLabel(summary.protocol);
   const last = rows[rows.length - 1];
   const dayRow = rows.find((r) => r.date === day) ?? null;
   // Price effect is a hold-the-deposit benchmark; IL takes back what the range didn't capture.
@@ -181,20 +214,13 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
   const positionalPnl = last ? last.cumulative.realised.il + last.cumulative.unrealised.il : 0;
   const positionPnl = pricePnl + positionalPnl;
   const feeRevalPnl = last ? last.cumulative.realised.feeReval + last.cumulative.unrealised.feeReval : 0;
+  const rewardRevalPnl = last ? last.cumulative.realised.rewardReval + last.cumulative.unrealised.rewardReval : 0;
   const bookedToDate = rows.filter((r) => !day || r.date <= day).reduce((sum, r) => sum + bookedOf(r).total, 0);
   const dayBooked = dayRow ? bookedOf(dayRow) : null;
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">
-          {base} / {quote} {feeTier(summary.pool.fee)} <span className="font-mono text-sm font-normal text-muted">#{summary.tokenId}</span>
-        </h2>
-        <p className="tnum text-xs text-muted">
-          Range {price(lo)} – {price(hi)} {quote}
-          {lastSnapshotAt && <> · last snapshot {new Date(lastSnapshotAt).toLocaleString()}</>}
-        </p>
-      </div>
+      <PositionHeader summary={summary} lastSnapshotAt={lastSnapshotAt} />
 
       {error && <p className="text-sm text-negative">✕ {error}</p>}
 
@@ -214,7 +240,7 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
         )
       ) : (
         <>
-          <LivePanel positionId={summary.id} pool={summary.pool} />
+          <LivePanel summary={summary} />
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted">Day-based charts show every UTC day in the range, including days without liquidity.</p>
@@ -234,13 +260,14 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
             <div className="mb-2">
               <Legend
                 series={[
-                  ...(includePriceEffect ? PNL_COMPONENTS : PNL_COMPONENTS.slice(1)),
+                  ...(includePriceEffect ? components : components.slice(1)),
                   { key: "net", label: "Daily P&L (net)", color: "var(--text-primary)" },
                 ]}
               />
             </div>
             <DailyPnlChart
               rows={rangeRows}
+              components={components}
               includePriceEffect={includePriceEffect}
               selectedDate={day}
               onSelectDate={setSelectedDate}
@@ -265,25 +292,50 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
                 ["Unrealised excl. price", last.cumulative.unrealised.total - last.cumulative.unrealised.priceEffect],
               ]}
             />
-            <Tile label="Total fee income" value={usd(last.cumulative.realised.feeIncome, true)} tone={tone(last.cumulative.realised.feeIncome)} />
+            <Tile
+              label={`Total ${income.toLowerCase()} income`}
+              value={usd(last.cumulative.realised.feeIncome, true)}
+              tone={tone(last.cumulative.realised.feeIncome)}
+            />
+            {isCompound && (
+              <Tile
+                label="COMP income"
+                value={usd(last.cumulative.realised.rewardIncome, true)}
+                tone={tone(last.cumulative.realised.rewardIncome)}
+              />
+            )}
             <Tile label="Total gas" value={usd(last.cumulative.realised.gasCost, true)} tone={tone(last.cumulative.realised.gasCost)} />
             <Tile
-              label="Fee revaluation"
+              label={`${income} revaluation`}
               value={usd(feeRevalPnl, true)}
               tone={tone(feeRevalPnl)}
               sub={`realised ${usd(last.cumulative.realised.feeReval, true)} · unrealised ${usd(last.cumulative.unrealised.feeReval, true)}`}
             />
-            <Tile
-              label="Positional P&L"
-              value={usd(positionPnl, true)}
-              tone={tone(positionPnl)}
-              sub={
-                <>
-                  <span className="block">price effect {usd(pricePnl, true)}</span>
-                  <span className="block">IL {usd(positionalPnl, true)}</span>
-                </>
-              }
-            />
+            {isCompound ? (
+              <Tile
+                label="Price effect"
+                value={usd(pricePnl, true)}
+                tone={tone(pricePnl)}
+                sub={
+                  <>
+                    <span className="block">on the ETH supplied · no IL</span>
+                    <span className="block">COMP revaluation {usd(rewardRevalPnl, true)}</span>
+                  </>
+                }
+              />
+            ) : (
+              <Tile
+                label="Positional P&L"
+                value={usd(positionPnl, true)}
+                tone={tone(positionPnl)}
+                sub={
+                  <>
+                    <span className="block">price effect {usd(pricePnl, true)}</span>
+                    <span className="block">IL {usd(positionalPnl, true)}</span>
+                  </>
+                }
+              />
+            )}
             {data?.direct && (
               <Tile
                 label="Position P&L (direct)"
@@ -310,7 +362,14 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
                 }))}
               />
             </Card>
-            <Card title="Position vs HODL" subtitle="Liquidity value against holding the deposited tokens; the gap is unrealised IL">
+            <Card
+              title="Position vs HODL"
+              subtitle={
+                isCompound
+                  ? "Supplied balance (incl. interest) against holding the ETH supplied; the gap is the interest earned"
+                  : "Liquidity value against holding the deposited tokens; the gap is unrealised IL"
+              }
+            >
               <div className="mb-2">
                 <Legend series={POSITION_HODL} />
               </div>
@@ -321,7 +380,7 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
             </Card>
           </div>
 
-          <DayPnlCharts positionId={summary.id} range={range} refreshKey={lastSnapshotAt} />
+          <DayPnlCharts positionId={summary.id} protocol={summary.protocol} range={range} refreshKey={lastSnapshotAt} />
 
           {dayRow && (
             <section className="rounded-lg border border-line bg-surface p-4">
@@ -330,13 +389,21 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
                 <p className="text-xs text-ink-2">Click a bar or a table row to pick another day</p>
               </div>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <Tile label="Capital in" value={usd(dayRow.daily.capitalIn)} sub="liquidity added (mint / increase)" />
-                <Tile label="Withdrawn" value={usd(dayRow.daily.capitalOut)} sub="principal + fees collected" />
+                <Tile
+                  label="Capital in"
+                  value={usd(dayRow.daily.capitalIn)}
+                  sub={isCompound ? "ETH supplied" : "liquidity added (mint / increase)"}
+                />
+                <Tile
+                  label="Withdrawn"
+                  value={usd(dayRow.daily.capitalOut)}
+                  sub={isCompound ? "ETH withdrawn + COMP claimed" : "principal + fees collected"}
+                />
                 <Tile
                   label="P&L booked"
                   value={usd(dayBooked!.total, true)}
                   tone={tone(dayBooked!.total)}
-                  sub={`position ${usd(dayBooked!.position, true)} · fees ${usd(dayBooked!.fees, true)} · to date ${usd(bookedToDate, true)}`}
+                  sub={`${isCompound ? "price" : "position"} ${usd(dayBooked!.position, true)} · ${isCompound ? "interest + COMP" : "fees"} ${usd(dayBooked!.fees, true)} · to date ${usd(bookedToDate, true)}`}
                 />
                 <Tile
                   label="Day P&L"
@@ -382,7 +449,7 @@ export function PositionDetail({ summary }: { summary: PositionSummaryDto }) {
               </div>
             }
           >
-            <DailyTable rows={rows} selectedDate={day} onSelectDate={setSelectedDate} />
+            <DailyTable rows={rows} protocol={summary.protocol} selectedDate={day} onSelectDate={setSelectedDate} />
           </Card>
         </>
       )}

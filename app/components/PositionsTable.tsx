@@ -1,7 +1,7 @@
 "use client";
 
 import type { PositionStatus, PositionSummaryDto } from "@/lib/pnl/types";
-import { feeTier, pairLabel, price, priceRange, usd } from "@/lib/format";
+import { feeTier, num, pairLabel, price, priceRange, shortAddress, usd } from "@/lib/format";
 import { Progress } from "./Progress";
 
 interface Props {
@@ -37,7 +37,7 @@ export function PositionsTable({ positions, selectedId, loading, onSelect, onRef
 
       {positions.length === 0 ? (
         <p className="px-4 py-6 text-sm text-ink-2">
-          {loading ? "Reading positions from chain…" : "No active Uniswap v3 positions found. Use “Refresh from chain” to look again."}
+          {loading ? "Reading positions from chain…" : "No active Uniswap v3 or Compound III positions found. Use “Refresh from chain” to look again."}
         </p>
       ) : (
         <div className="overflow-x-auto">
@@ -45,7 +45,7 @@ export function PositionsTable({ positions, selectedId, loading, onSelect, onRef
             <thead className="text-left text-xs text-muted">
               <tr>
                 <th className="px-4 py-2 font-normal">Position</th>
-                <th className="px-4 py-2 font-normal">Range</th>
+                <th className="px-4 py-2 font-normal">Range / balance</th>
                 <th className="px-4 py-2 font-normal">Status</th>
                 <th className="px-4 py-2 text-right font-normal">NAV</th>
                 <th className="px-4 py-2 text-right font-normal">Total P&amp;L</th>
@@ -54,12 +54,6 @@ export function PositionsTable({ positions, selectedId, loading, onSelect, onRef
             </thead>
             <tbody>
               {positions.map((p) => {
-                const { base, quote } = pairLabel(p.pool);
-                const [lo, hi] = priceRange(p.pool, p.tickLower, p.tickUpper);
-                const inRange =
-                  p.currentTick !== null
-                    ? p.currentTick >= p.tickLower && p.currentTick < p.tickUpper
-                    : (p.latest?.inRange ?? null);
                 const st = STATUS[p.status];
                 const tracked = ["BACKFILLING", "TRACKING", "ERROR"].includes(p.status);
                 const selected = p.id === selectedId;
@@ -69,22 +63,7 @@ export function PositionsTable({ positions, selectedId, loading, onSelect, onRef
                     onClick={() => p.latest && onSelect(p.id)}
                     className={`border-t border-line ${p.latest ? "cursor-pointer hover:bg-surface-2" : ""} ${selected ? "bg-surface-2" : ""}`}
                   >
-                    <td className="px-4 py-3">
-                      <div className="font-medium">
-                        {base} / {quote} <span className="font-normal text-muted">{feeTier(p.pool.fee)}</span>
-                      </div>
-                      <div className="font-mono text-xs text-muted">#{p.tokenId}</div>
-                    </td>
-                    <td className="tnum px-4 py-3">
-                      <div>
-                        {price(lo)} – {price(hi)} <span className="text-muted">{quote}</span>
-                      </div>
-                      {inRange !== null && (
-                        <div className={`text-xs ${inRange ? "text-good" : "text-ink-2"}`}>
-                          {inRange ? "✓ In range" : "○ Out of range"}
-                        </div>
-                      )}
-                    </td>
+                    <PositionCells p={p} />
                     <td className="px-4 py-3">
                       <span className={st.color}>
                         {st.icon} {st.label}
@@ -129,5 +108,54 @@ export function PositionsTable({ positions, selectedId, loading, onSelect, onRef
         </div>
       )}
     </section>
+  );
+}
+
+/** Name and range (Uniswap v3) or supplied balance (Compound III). */
+function PositionCells({ p }: { p: PositionSummaryDto }) {
+  if (p.compound) {
+    return (
+      <>
+        <td className="px-4 py-3">
+          <div className="font-medium">
+            {p.compound.name} <span className="font-normal text-muted">supply</span>
+          </div>
+          <div className="font-mono text-xs text-muted">{shortAddress(p.compound.comet)}</div>
+        </td>
+        <td className="tnum px-4 py-3">
+          {p.compound.balance !== null ? (
+            <div>
+              {num(p.compound.balance)} <span className="text-muted">{p.compound.baseSymbol} supplied</span>
+            </div>
+          ) : (
+            <div className="text-muted">—</div>
+          )}
+          <div className="text-xs text-ink-2">Earning interest</div>
+        </td>
+      </>
+    );
+  }
+  if (!p.pool || p.tickLower === null || p.tickUpper === null) return <td colSpan={2} className="px-4 py-3">—</td>;
+  const { base, quote } = pairLabel(p.pool);
+  const [lo, hi] = priceRange(p.pool, p.tickLower, p.tickUpper);
+  const inRange =
+    p.currentTick !== null ? p.currentTick >= p.tickLower && p.currentTick < p.tickUpper : (p.latest?.inRange ?? null);
+  return (
+    <>
+      <td className="px-4 py-3">
+        <div className="font-medium">
+          {base} / {quote} <span className="font-normal text-muted">{feeTier(p.pool.fee)}</span>
+        </div>
+        <div className="font-mono text-xs text-muted">#{p.tokenId}</div>
+      </td>
+      <td className="tnum px-4 py-3">
+        <div>
+          {price(lo)} – {price(hi)} <span className="text-muted">{quote}</span>
+        </div>
+        {inRange !== null && (
+          <div className={`text-xs ${inRange ? "text-good" : "text-ink-2"}`}>{inRange ? "✓ In range" : "○ Out of range"}</div>
+        )}
+      </td>
+    </>
   );
 }

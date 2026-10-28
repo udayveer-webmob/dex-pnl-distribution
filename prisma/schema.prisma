@@ -29,6 +29,11 @@ model Pool {
   positions      Position[]
 }
 
+enum Protocol {
+  UNISWAP_V3
+  COMPOUND_V3
+}
+
 enum PositionStatus {
   DISCOVERED // listed, not tracked
   BACKFILLING // tracked, daily history being replayed
@@ -39,13 +44,19 @@ enum PositionStatus {
 
 model Position {
   id          String         @id @default(cuid())
-  tokenId     String         @unique // NonfungiblePositionManager token id (uint256 as string)
+  protocol    Protocol       @default(UNISWAP_V3)
+  // Uniswap v3: NonfungiblePositionManager token id (uint256 as string).
+  // Compound III: "<comet address>:<wallet address>" (one supply position per market and wallet).
+  tokenId     String         @unique
   walletId    String
   wallet      Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  poolAddress String
-  pool        Pool           @relation(fields: [poolAddress], references: [address])
-  tickLower   Int
-  tickUpper   Int
+  // Uniswap v3 only
+  poolAddress String?
+  pool        Pool?          @relation(fields: [poolAddress], references: [address])
+  tickLower   Int?
+  tickUpper   Int?
+  // Compound III only: Comet market address (lowercase)
+  market      String?
   status      PositionStatus @default(DISCOVERED)
   mintBlock   BigInt?
   // Last block the engine has processed (events are fetched from lastBlock + 1).
@@ -98,20 +109,24 @@ model Snapshot {
   navOpen       Float
   nav           Float
 
-  // Interval P&L since the previous snapshot
-  feeIncome   Float
-  gasCost     Float
-  feeReval    Float
-  priceEffect Float
-  ilChange    Float
-  capitalIn   Float
-  capitalOut  Float
-  pnl         Float
+  // Interval P&L since the previous snapshot. For Compound III, fee* fields hold interest and
+  // reward* fields hold COMP rewards; for Uniswap v3 the reward* fields stay 0.
+  feeIncome    Float
+  gasCost      Float
+  feeReval     Float
+  priceEffect  Float
+  ilChange     Float
+  capitalIn    Float
+  capitalOut   Float
+  pnl          Float
+  rewardIncome Float @default(0)
+  rewardReval  Float @default(0)
 
   // Moved from unrealised to realised during the interval
   feeRevalToRealised    Float
   priceEffectToRealised Float
   ilToRealised          Float
+  rewardRevalToRealised Float @default(0)
 
   // Cumulative
   rFeeIncome      Float
@@ -119,10 +134,13 @@ model Snapshot {
   rFeeReval       Float
   rPriceEffect    Float
   rIl             Float
+  rRewardIncome   Float @default(0)
+  rRewardReval    Float @default(0)
   realisedTotal   Float
   uPriceEffect    Float
   uIl             Float
   uFeeReval       Float
+  uRewardReval    Float @default(0)
   unrealisedTotal Float
   totalPnl        Float
   netCapital      Float
@@ -138,9 +156,16 @@ model Snapshot {
 }
 
 enum EventType {
+  // Uniswap v3
   INCREASE
   DECREASE
   COLLECT
+  // Compound III
+  SUPPLY
+  WITHDRAW
+  TRANSFER_IN
+  TRANSFER_OUT
+  REWARD_CLAIM
 }
 
 model PositionEvent {

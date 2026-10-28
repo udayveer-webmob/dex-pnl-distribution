@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { DailyRowDto } from "@/lib/pnl/types";
+import type { DailyRowDto, ProtocolDto } from "@/lib/pnl/types";
 import { bookedOf, isIdleDaily, usd } from "@/lib/format";
 
 type View = "daily" | "cumulative";
@@ -20,54 +20,65 @@ const signed = (v: number) => (
   </span>
 );
 
-const DAILY_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
-  ["Opening NAV", (r) => usd(r.openingNav)],
-  ["Fee income (R)", (r) => signed(r.daily.feeIncome)],
-  ["Gas (R)", (r) => signed(r.daily.gasCost)],
-  ["Fee reval. (U)", (r) => signed(r.daily.feeReval)],
-  ["Price effect (U)", (r) => signed(r.daily.priceEffect)],
-  ["IL change (U)", (r) => signed(r.daily.ilChange)],
-  ["Capital in", (r) => usd(r.daily.capitalIn)],
-  ["Capital out", (r) => usd(r.daily.capitalOut)],
-  ["P&L booked", (r) => signed(bookedOf(r).total)],
-  ["Daily P&L", (r) => <strong>{signed(r.daily.pnl)}</strong>],
-  ["Closing NAV", (r) => usd(r.closingNav)],
-];
+type Column = [string, (r: DailyRowDto) => React.ReactNode];
 
-const CUMULATIVE_COLUMNS: [string, (r: DailyRowDto) => React.ReactNode][] = [
-  ["Fee income", (r) => signed(r.cumulative.realised.feeIncome)],
-  ["Gas", (r) => signed(r.cumulative.realised.gasCost)],
-  ["Realised fee reval.", (r) => signed(r.cumulative.realised.feeReval)],
-  [
-    "Realised position P&L",
-    (r) => signed(r.cumulative.realised.priceEffect + r.cumulative.realised.il),
-  ],
-  [
-    "Cum. realised",
-    (r) => <strong>{signed(r.cumulative.realised.total)}</strong>,
-  ],
-  ["Price effect", (r) => signed(r.cumulative.unrealised.priceEffect)],
-  ["IL", (r) => signed(r.cumulative.unrealised.il)],
-  ["Fee reval.", (r) => signed(r.cumulative.unrealised.feeReval)],
-  [
-    "Cum. unrealised",
-    (r) => <strong>{signed(r.cumulative.unrealised.total)}</strong>,
-  ],
-  ["Total P&L", (r) => <strong>{signed(r.cumulative.totalPnl)}</strong>],
-];
+function dailyColumns(protocol: ProtocolDto): Column[] {
+  const compound = protocol === "COMPOUND_V3";
+  return [
+    ["Opening NAV", (r) => usd(r.openingNav)],
+    [compound ? "Interest (R)" : "Fee income (R)", (r) => signed(r.daily.feeIncome)],
+    ...(compound ? ([["COMP (R)", (r) => signed(r.daily.rewardIncome)]] as Column[]) : []),
+    ["Gas (R)", (r) => signed(r.daily.gasCost)],
+    [compound ? "Interest reval. (U)" : "Fee reval. (U)", (r) => signed(r.daily.feeReval)],
+    ...(compound ? ([["COMP reval. (U)", (r) => signed(r.daily.rewardReval)]] as Column[]) : []),
+    ["Price effect (U)", (r) => signed(r.daily.priceEffect)],
+    ...(compound ? [] : ([["IL change (U)", (r) => signed(r.daily.ilChange)]] as Column[])),
+    ["Capital in", (r) => usd(r.daily.capitalIn)],
+    ["Capital out", (r) => usd(r.daily.capitalOut)],
+    ["P&L booked", (r) => signed(bookedOf(r).total)],
+    ["Daily P&L", (r) => <strong>{signed(r.daily.pnl)}</strong>],
+    ["Closing NAV", (r) => usd(r.closingNav)],
+  ];
+}
+
+function cumulativeColumns(protocol: ProtocolDto): Column[] {
+  const compound = protocol === "COMPOUND_V3";
+  return [
+    [compound ? "Interest" : "Fee income", (r) => signed(r.cumulative.realised.feeIncome)],
+    ...(compound ? ([["COMP", (r) => signed(r.cumulative.realised.rewardIncome)]] as Column[]) : []),
+    ["Gas", (r) => signed(r.cumulative.realised.gasCost)],
+    [
+      compound ? "Realised interest + COMP reval." : "Realised fee reval.",
+      (r) => signed(r.cumulative.realised.feeReval + r.cumulative.realised.rewardReval),
+    ],
+    [
+      compound ? "Realised price effect" : "Realised position P&L",
+      (r) => signed(r.cumulative.realised.priceEffect + r.cumulative.realised.il),
+    ],
+    ["Cum. realised", (r) => <strong>{signed(r.cumulative.realised.total)}</strong>],
+    ["Price effect", (r) => signed(r.cumulative.unrealised.priceEffect)],
+    ...(compound ? [] : ([["IL", (r) => signed(r.cumulative.unrealised.il)]] as Column[])),
+    [compound ? "Interest reval." : "Fee reval.", (r) => signed(r.cumulative.unrealised.feeReval)],
+    ...(compound ? ([["COMP reval.", (r) => signed(r.cumulative.unrealised.rewardReval)]] as Column[]) : []),
+    ["Cum. unrealised", (r) => <strong>{signed(r.cumulative.unrealised.total)}</strong>],
+    ["Total P&L", (r) => <strong>{signed(r.cumulative.totalPnl)}</strong>],
+  ];
+}
 
 /** Spec §8.2 (daily) and §8.4 (cumulative) layouts, newest day first. */
 export function DailyTable({
   rows,
+  protocol,
   selectedDate,
   onSelectDate,
 }: {
   rows: DailyRowDto[];
+  protocol: ProtocolDto;
   selectedDate: string | null;
   onSelectDate: (date: string) => void;
 }) {
   const [view, setView] = useState<View>("daily");
-  const columns = view === "daily" ? DAILY_COLUMNS : CUMULATIVE_COLUMNS;
+  const columns = view === "daily" ? dailyColumns(protocol) : cumulativeColumns(protocol);
 
   return (
     <div>
@@ -116,7 +127,7 @@ export function DailyTable({
                     {r.date}
                     {idle && (
                       <span className="ml-2 rounded border border-line px-1.5 py-0.5 text-xs text-ink-2">
-                        ○ no liquidity
+                        ○ {protocol === "COMPOUND_V3" ? "nothing supplied" : "no liquidity"}
                       </span>
                     )}
                   </td>

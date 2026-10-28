@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import type { Pool, Position, Snapshot } from "@/lib/generated/prisma/client";
 import type { DailyRowDto, DirectPositionPnlDto, IntradayPointDto, PositionSummaryDto, ProgressDto } from "@/lib/pnl/types";
 import type { CloseSnapshot } from "@/lib/pnl/dayPnl";
+import { COMET_MARKETS } from "@/lib/compound/markets";
 
 type LatestFields = Pick<
   Snapshot,
@@ -11,19 +12,25 @@ type LatestFields = Pick<
 >;
 
 export function positionSummary(
-  p: Position & { pool: Pool },
+  p: Position & { pool: Pool | null },
   latest: LatestFields | null,
   currentTick: number | null,
+  compoundBalance: number | null = null,
 ): PositionSummaryDto {
+  const market = p.market ? COMET_MARKETS.find((m) => m.comet.toLowerCase() === p.market) : undefined;
   return {
     id: p.id,
+    protocol: p.protocol,
     tokenId: p.tokenId,
     status: p.status,
     tickLower: p.tickLower,
     tickUpper: p.tickUpper,
+    pool: p.pool,
+    compound: market
+      ? { comet: market.comet, name: market.name, baseSymbol: market.baseSymbol, balance: compoundBalance }
+      : null,
     lastError: p.lastError,
     progress: (p.progress as ProgressDto | null) ?? null,
-    pool: p.pool,
     currentTick,
     latest: latest && {
       timestamp: latest.timestamp.toISOString(),
@@ -61,6 +68,9 @@ interface DayAggregate {
   ilToRealised: number;
   booked: number;
   bookedPosition: number;
+  rewardIncome: number;
+  rewardReval: number;
+  rewardRevalToRealised: number;
 }
 
 /**
@@ -95,6 +105,9 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
       SUM("priceEffectToRealised") AS "priceEffectToRealised",
       SUM("ilToRealised") AS "ilToRealised",
       SUM(booked) AS booked,
+      SUM("rewardIncome") AS "rewardIncome",
+      SUM("rewardReval") AS "rewardReval",
+      SUM("rewardRevalToRealised") AS "rewardRevalToRealised",
       SUM("priceEffectToRealised" + "ilToRealised") AS "bookedPosition"
     FROM s
     GROUP BY date
@@ -123,6 +136,8 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
         feeReval: d.feeReval,
         priceEffect: d.priceEffect,
         ilChange: d.ilChange,
+        rewardIncome: d.rewardIncome,
+        rewardReval: d.rewardReval,
         capitalIn: d.capitalIn,
         capitalOut: d.capitalOut,
         pnl: d.pnl,
@@ -136,6 +151,7 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
         feeRevalToRealised: d.feeRevalToRealised,
         priceEffectToRealised: d.priceEffectToRealised,
         ilToRealised: d.ilToRealised,
+        rewardRevalToRealised: d.rewardRevalToRealised,
       },
       cumulative: {
         realised: {
@@ -144,9 +160,17 @@ export async function dailyRows(positionId: string): Promise<DailyRowDto[]> {
           feeReval: s.rFeeReval,
           priceEffect: s.rPriceEffect,
           il: s.rIl,
+          rewardIncome: s.rRewardIncome,
+          rewardReval: s.rRewardReval,
           total: s.realisedTotal,
         },
-        unrealised: { priceEffect: s.uPriceEffect, il: s.uIl, feeReval: s.uFeeReval, total: s.unrealisedTotal },
+        unrealised: {
+          priceEffect: s.uPriceEffect,
+          il: s.uIl,
+          feeReval: s.uFeeReval,
+          rewardReval: s.uRewardReval,
+          total: s.unrealisedTotal,
+        },
         totalPnl: s.totalPnl,
         netCapital: s.netCapital,
       },
@@ -187,6 +211,7 @@ export async function dayCloseSnapshots(positionId: string): Promise<CloseSnapsh
       date, timestamp,
       "rFeeIncome", "rGasCost", "rFeeReval", "rPriceEffect", "rIl",
       "uPriceEffect", "uIl", "uFeeReval",
+      "rRewardIncome", "rRewardReval", "uRewardReval",
       "realisedTotal", "unrealisedTotal", "totalPnl"
     FROM "Snapshot"
     WHERE "positionId" = ${positionId}

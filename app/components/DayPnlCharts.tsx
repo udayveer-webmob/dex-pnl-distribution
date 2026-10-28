@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DayPnlDto } from "@/lib/pnl/types";
+import type { DayPnlDto, ProtocolDto } from "@/lib/pnl/types";
 import { type DayRange, inDayRange, isIdleDay, usd, usdCompact } from "@/lib/format";
 import { api } from "./api";
 import { IdleTip } from "./charts";
@@ -30,7 +30,16 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const shortDate = (d: string) => `${MONTHS[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8, 10))}`;
 const utcTime = (iso: string) => `${shortDate(iso.slice(0, 10))} ${iso.slice(11, 16)}`;
 
-const COMPONENTS: [keyof DayPnlDto["components"], string][] = [
+const COMPOUND_COMPONENTS: [keyof DayPnlDto["components"], string][] = [
+  ["priceEffect", "Price effect"],
+  ["feeIncome", "Interest income"],
+  ["rewardIncome", "COMP income"],
+  ["feeReval", "Interest revaluation"],
+  ["rewardReval", "COMP revaluation"],
+  ["gasCost", "Gas"],
+];
+
+const UNISWAP_COMPONENTS: [keyof DayPnlDto["components"], string][] = [
   ["priceEffect", "Price effect"],
   ["positionalChange", "IL change"],
   ["feeIncome", "Fee income"],
@@ -53,7 +62,7 @@ function Card({ title, subtitle, actions, children }: { title: string; subtitle:
   );
 }
 
-function DayTooltip({ d }: { d: DayPnlDto }) {
+function DayTooltip({ d, protocol }: { d: DayPnlDto; protocol: ProtocolDto }) {
   return (
     <div className="min-w-56 rounded-md border border-line bg-surface px-3 py-2 text-xs shadow-sm">
       <p className="font-medium text-ink">{shortDate(d.date)}</p>
@@ -74,7 +83,7 @@ function DayTooltip({ d }: { d: DayPnlDto }) {
             <td className="py-0.5 pr-3">Day P&amp;L</td>
             <td className="py-0.5 text-right">{usd(d.pnl, true)}</td>
           </tr>
-          {COMPONENTS.map(([key, label]) => (
+          {(protocol === "COMPOUND_V3" ? COMPOUND_COMPONENTS : UNISWAP_COMPONENTS).map(([key, label]) => (
             <tr key={key}>
               <td className="py-0.5 pl-2 pr-3 text-muted">{label}</td>
               <td className="py-0.5 text-right text-ink-2">{usd(d.components[key], true)}</td>
@@ -92,7 +101,17 @@ const isIdle = (d: DayPnlDto) => isIdleDay(d.components);
  * Two charts built from each day's opening and closing snapshot only (opening = previous day's
  * close): day-by-day P&L bars, and cumulative total P&L at each day's close.
  */
-export function DayPnlCharts({ positionId, range, refreshKey }: { positionId: string; range: DayRange; refreshKey?: string }) {
+export function DayPnlCharts({
+  positionId,
+  protocol,
+  range,
+  refreshKey,
+}: {
+  positionId: string;
+  protocol: ProtocolDto;
+  range: DayRange;
+  refreshKey?: string;
+}) {
   const [days, setDays] = useState<DayPnlDto[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,7 +153,7 @@ export function DayPnlCharts({ positionId, range, refreshKey }: { positionId: st
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0].payload as DayPnlDto & { idle: boolean };
-                  return d.idle ? <IdleTip title={shortDate(d.date)} /> : <DayTooltip d={d} />;
+                  return d.idle ? <IdleTip title={shortDate(d.date)} /> : <DayTooltip d={d} protocol={protocol} />;
                 }}
               />
               <Bar dataKey="pnl" maxBarSize={24} isAnimationActive={false}>
@@ -168,7 +187,7 @@ export function DayPnlCharts({ positionId, range, refreshKey }: { positionId: st
               <Tooltip
                 cursor={{ stroke: "var(--axis)" }}
                 content={({ active, payload }) =>
-                  active && payload?.length ? <DayTooltip d={payload[0].payload as DayPnlDto} /> : null
+                  active && payload?.length ? <DayTooltip d={payload[0].payload as DayPnlDto} protocol={protocol} /> : null
                 }
               />
               <Area

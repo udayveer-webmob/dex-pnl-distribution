@@ -15,6 +15,9 @@ export interface CloseSnapshot {
   uPriceEffect: number;
   uIl: number;
   uFeeReval: number;
+  rRewardIncome: number;
+  rRewardReval: number;
+  uRewardReval: number;
   realisedTotal: number;
   unrealisedTotal: number;
   totalPnl: number;
@@ -29,6 +32,9 @@ const ZERO: Omit<CloseSnapshot, "date" | "timestamp"> = {
   uPriceEffect: 0,
   uIl: 0,
   uFeeReval: 0,
+  rRewardIncome: 0,
+  rRewardReval: 0,
+  uRewardReval: 0,
   realisedTotal: 0,
   unrealisedTotal: 0,
   totalPnl: 0,
@@ -52,6 +58,8 @@ export function buildDayPnl(closes: CloseSnapshot[]): DayPnlDto[] {
         feeReval: close.rFeeReval + close.uFeeReval - (open.rFeeReval + open.uFeeReval),
         priceEffect: close.rPriceEffect + close.uPriceEffect - (open.rPriceEffect + open.uPriceEffect),
         positionalChange: close.rIl + close.uIl - (open.rIl + open.uIl),
+        rewardIncome: close.rRewardIncome - open.rRewardIncome,
+        rewardReval: close.rRewardReval + close.uRewardReval - (open.rRewardReval + open.uRewardReval),
       },
       cumulative: {
         realised: close.realisedTotal,

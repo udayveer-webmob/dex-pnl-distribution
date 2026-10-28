@@ -60,8 +60,24 @@ export const isIdleDay = (components: Record<string, number>) =>
   Object.values(components).every((v) => Math.abs(v) < 0.005);
 
 /** isIdleDay for a DailyRowDto's interval figures (capital flows are not P&L). */
-export const isIdleDaily = (d: { feeIncome: number; gasCost: number; feeReval: number; priceEffect: number; ilChange: number }) =>
-  isIdleDay({ a: d.feeIncome, b: d.gasCost, c: d.feeReval, e: d.priceEffect, f: d.ilChange });
+export const isIdleDaily = (d: {
+  feeIncome: number;
+  gasCost: number;
+  feeReval: number;
+  priceEffect: number;
+  ilChange: number;
+  rewardIncome?: number;
+  rewardReval?: number;
+}) =>
+  isIdleDay({
+    a: d.feeIncome,
+    b: d.gasCost,
+    c: d.feeReval,
+    e: d.priceEffect,
+    f: d.ilChange,
+    g: d.rewardIncome ?? 0,
+    h: d.rewardReval ?? 0,
+  });
 
 /** A row's booked P&L; zero when the row predates the field (e.g. data fetched before an update). */
 export const bookedOf = (r: { booked?: { total: number; position: number; fees: number } }) =>

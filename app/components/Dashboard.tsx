@@ -111,8 +111,8 @@ export function Dashboard() {
     <main className="w-full flex-1 px-4 py-6">
       <header className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h1 className="text-xl font-semibold">Uniswap v3 LP P&amp;L</h1>
-          <p className="text-sm text-ink-2">Day-wise realised and unrealised P&amp;L, snapshotted every 2 minutes</p>
+          <h1 className="text-xl font-semibold">DeFi position P&amp;L</h1>
+          <p className="text-sm text-ink-2">Day-wise realised and unrealised P&amp;L for Uniswap v3 and Compound III · snapshots at each day end and position event, plus a live view</p>
         </div>
         <p className="text-xs text-muted">Ethereum mainnet · values in USD · days in UTC</p>
       </header>

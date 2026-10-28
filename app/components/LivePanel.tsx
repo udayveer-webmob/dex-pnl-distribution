@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { LivePnlDto, PnlBreakdownDto, PoolDto } from "@/lib/pnl/types";
+import type { LivePnlDto, PnlBreakdownDto, PositionSummaryDto } from "@/lib/pnl/types";
 import { num, pairLabel, usd } from "@/lib/format";
 import { api } from "./api";
 
@@ -31,16 +31,27 @@ function Rows({ rows }: { rows: [string, number][] }) {
   );
 }
 
-const components = (b: PnlBreakdownDto): [string, number][] => [
-  ["Fee income", b.feeIncome],
-  ["Fee revaluation", b.feeReval],
-  ["Price effect", b.priceEffect],
-  ["IL", b.il],
-  ["Gas", b.gasCost],
-];
+const components = (b: PnlBreakdownDto, compound: boolean): [string, number][] =>
+  compound
+    ? [
+        ["Interest income", b.feeIncome],
+        ["COMP income", b.rewardIncome],
+        ["Interest revaluation", b.feeReval],
+        ["COMP revaluation", b.rewardReval],
+        ["Price effect", b.priceEffect],
+        ["Gas", b.gasCost],
+      ]
+    : [
+        ["Fee income", b.feeIncome],
+        ["Fee revaluation", b.feeReval],
+        ["Price effect", b.priceEffect],
+        ["IL", b.il],
+        ["Gas", b.gasCost],
+      ];
 
 /** P&L at the chain head, computed on request (not stored) and refreshed every minute. */
-export function LivePanel({ positionId, pool }: { positionId: string; pool: PoolDto }) {
+export function LivePanel({ summary }: { summary: PositionSummaryDto }) {
+  const positionId = summary.id;
   const [live, setLive] = useState<LivePnlDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,8 +71,10 @@ export function LivePanel({ positionId, pool }: { positionId: string; pool: Pool
     };
   }, [positionId]);
 
-  const { base, quote } = pairLabel(pool);
-  const baseIs0 = pool.refToken === 1;
+  const compound = summary.compound;
+  // Uniswap: base/quote from the pool. Compound: the supplied asset is token "0" in the live figures.
+  const { base, quote } = summary.pool ? pairLabel(summary.pool) : { base: compound?.baseSymbol ?? "", quote: "" };
+  const baseIs0 = summary.pool ? summary.pool.refToken === 1 : true;
 
   return (
     <section className="rounded-lg border border-line bg-surface p-4">
@@ -94,15 +107,32 @@ export function LivePanel({ positionId, pool }: { positionId: string; pool: Pool
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Box label={`${base} price`}>
               <p className="mt-1 text-lg font-semibold">{usd(baseIs0 ? live.usd0 : live.usd1)}</p>
-              <p className={`text-xs ${live.inRange ? "text-good" : "text-ink-2"}`}>{live.inRange ? "✓ In range" : "○ Out of range"}</p>
+              {compound ? (
+                <p className="text-xs text-ink-2">Chainlink ETH/USD</p>
+              ) : (
+                <p className={`text-xs ${live.inRange ? "text-good" : "text-ink-2"}`}>{live.inRange ? "✓ In range" : "○ Out of range"}</p>
+              )}
             </Box>
-            <Box label="Position now">
-              <p className="mt-1 text-lg font-semibold">{usd(live.positionValue + live.heldFeesValue)}</p>
-              <p className="tnum text-xs text-muted">
-                {num(baseIs0 ? live.amount0 : live.amount1)} {base} + {num(baseIs0 ? live.amount1 : live.amount0, 2)} {quote}
-              </p>
-              <p className="tnum text-xs text-muted">incl. uncollected fees {usd(live.heldFeesValue)}</p>
-            </Box>
+            {compound ? (
+              <Box label="Supplied now">
+                <p className="mt-1 text-lg font-semibold">{usd(live.positionValue + live.heldFeesValue)}</p>
+                <p className="tnum text-xs text-muted">
+                  {num(live.amount0, 6)} {compound.baseSymbol}
+                  {live.supplyApr !== undefined && <> · APR {(live.supplyApr * 100).toFixed(2)}%</>}
+                </p>
+                <p className="tnum text-xs text-muted">
+                  unclaimed COMP {num(live.heldFees0, 6)} ({usd(live.heldFeesValue)})
+                </p>
+              </Box>
+            ) : (
+              <Box label="Position now">
+                <p className="mt-1 text-lg font-semibold">{usd(live.positionValue + live.heldFeesValue)}</p>
+                <p className="tnum text-xs text-muted">
+                  {num(baseIs0 ? live.amount0 : live.amount1)} {base} + {num(baseIs0 ? live.amount1 : live.amount0, 2)} {quote}
+                </p>
+                <p className="tnum text-xs text-muted">incl. uncollected fees {usd(live.heldFeesValue)}</p>
+              </Box>
+            )}
             <Box label="Total P&L (live)">
               <p className={`mt-1 text-lg font-semibold ${toneClass(live.totals.total)}`}>{usd(live.totals.total, true)}</p>
               <p className="tnum text-xs text-muted">
@@ -112,19 +142,34 @@ export function LivePanel({ positionId, pool }: { positionId: string; pool: Pool
             </Box>
             <Box label={`Today so far · ${live.today.date}`}>
               <p className={`mt-1 text-lg font-semibold ${toneClass(live.today.total)}`}>{usd(live.today.total, true)}</p>
-              <Rows rows={components(live.today)} />
+              <Rows rows={components(live.today, !!compound)} />
             </Box>
-            <Box label="Positional P&L (live)">
-              <p className={`mt-1 text-lg font-semibold ${toneClass(live.totals.priceEffect + live.totals.il)}`}>
-                {usd(live.totals.priceEffect + live.totals.il, true)}
-              </p>
-              <Rows
-                rows={[
-                  ["Price effect", live.totals.priceEffect],
-                  ["IL", live.totals.il],
-                ]}
-              />
-            </Box>
+            {compound ? (
+              <Box label="Earnings vs price (live)">
+                <p className={`mt-1 text-lg font-semibold ${toneClass(live.totals.priceEffect)}`}>
+                  {usd(live.totals.priceEffect, true)}
+                </p>
+                <Rows
+                  rows={[
+                    ["Interest + COMP", live.totals.feeIncome + live.totals.rewardIncome],
+                    ["Revaluation", live.totals.feeReval + live.totals.rewardReval],
+                    ["Gas", live.totals.gasCost],
+                  ]}
+                />
+              </Box>
+            ) : (
+              <Box label="Positional P&L (live)">
+                <p className={`mt-1 text-lg font-semibold ${toneClass(live.totals.priceEffect + live.totals.il)}`}>
+                  {usd(live.totals.priceEffect + live.totals.il, true)}
+                </p>
+                <Rows
+                  rows={[
+                    ["Price effect", live.totals.priceEffect],
+                    ["IL", live.totals.il],
+                  ]}
+                />
+              </Box>
+            )}
           </div>
           {!live.checksOk && <p className="mt-2 text-xs text-critical">▲ A reconciliation check failed in the live calculation.</p>}
         </>

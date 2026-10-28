@@ -30,15 +30,30 @@ export interface ProgressDto {
   updatedAt: string;
 }
 
+export type ProtocolDto = "UNISWAP_V3" | "COMPOUND_V3";
+
+/** Compound III supply position details. */
+export interface CompoundInfoDto {
+  comet: string;
+  name: string;
+  baseSymbol: string;
+  /** Supplied balance incl. interest, read live when the list is loaded (null if unavailable). */
+  balance: number | null;
+}
+
 export interface PositionSummaryDto {
   id: string;
+  protocol: ProtocolDto;
   tokenId: string;
   status: PositionStatus;
-  tickLower: number;
-  tickUpper: number;
+  /** Uniswap v3 only (null for Compound). */
+  tickLower: number | null;
+  tickUpper: number | null;
+  pool: PoolDto | null;
+  /** Compound III only (null for Uniswap). */
+  compound: CompoundInfoDto | null;
   lastError: string | null;
   progress: ProgressDto | null;
-  pool: PoolDto;
   currentTick: number | null;
   latest: {
     timestamp: string;
@@ -71,6 +86,9 @@ export interface DailyRowDto {
     feeReval: number;
     priceEffect: number;
     ilChange: number;
+    /** Compound: COMP rewards (0 for Uniswap). fee* fields hold interest for Compound. */
+    rewardIncome: number;
+    rewardReval: number;
     capitalIn: number;
     capitalOut: number;
     pnl: number;
@@ -85,10 +103,20 @@ export interface DailyRowDto {
     feeRevalToRealised: number;
     priceEffectToRealised: number;
     ilToRealised: number;
+    rewardRevalToRealised: number;
   };
   cumulative: {
-    realised: { feeIncome: number; gasCost: number; feeReval: number; priceEffect: number; il: number; total: number };
-    unrealised: { priceEffect: number; il: number; feeReval: number; total: number };
+    realised: {
+      feeIncome: number;
+      gasCost: number;
+      feeReval: number;
+      priceEffect: number;
+      il: number;
+      rewardIncome: number;
+      rewardReval: number;
+      total: number;
+    };
+    unrealised: { priceEffect: number; il: number; feeReval: number; rewardReval: number; total: number };
     totalPnl: number;
     netCapital: number;
   };
@@ -122,6 +150,8 @@ export interface DayPnlDto {
     feeReval: number;
     priceEffect: number;
     positionalChange: number;
+    rewardIncome: number;
+    rewardReval: number;
   };
   cumulative: { realised: number; unrealised: number; total: number };
 }
@@ -140,11 +170,15 @@ export interface DirectPositionPnlDto {
 /** Cumulative (or period) P&L split into its components. */
 export interface PnlBreakdownDto {
   total: number;
+  /** Uniswap: swap fees. Compound: supply interest. */
   feeIncome: number;
   gasCost: number;
   feeReval: number;
   priceEffect: number;
   il: number;
+  /** Compound: COMP rewards (0 for Uniswap). */
+  rewardIncome: number;
+  rewardReval: number;
 }
 
 /** Live P&L at the chain head, computed on request and not stored. */
@@ -172,10 +206,12 @@ export interface LivePnlDto {
   today: PnlBreakdownDto & { date: string };
   sinceLastSnapshot: PnlBreakdownDto;
   checksOk: boolean;
+  /** Compound only: current supply APR (display only). */
+  supplyApr?: number;
 }
 
 export interface PositionPnlDto {
   position: PositionSummaryDto;
   daily: DailyRowDto[];
-  direct: DirectPositionPnlDto;
+  direct: DirectPositionPnlDto | null;
 }

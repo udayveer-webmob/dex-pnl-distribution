@@ -12,7 +12,10 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/positions/[
     return {
       position: positionSummary(p, latest, latest?.tick ?? null),
       daily: await dailyRows(id),
-      direct: await directPositionPnl(id, p.pool.token0Decimals, p.pool.token1Decimals, latest?.positionValue ?? 0),
+      // Direct (in − out) position P&L is defined for Uniswap liquidity only.
+      direct: p.pool
+        ? await directPositionPnl(id, p.pool.token0Decimals, p.pool.token1Decimals, latest?.positionValue ?? 0)
+        : null,
     };
   });
 }

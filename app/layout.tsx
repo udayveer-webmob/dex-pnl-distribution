@@ -8,8 +8,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LP P&L Tracker",
-  description: "Day-wise realised and unrealised P&L for Uniswap v3 positions",
+  title: "DeFi P&L Tracker",
+  description: "Day-wise realised and unrealised P&L for Uniswap v3 and Compound III positions",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

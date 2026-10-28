@@ -16,7 +16,20 @@ import {
   unrealisedTotal,
 } from "@/lib/pnl/engine";
 import type { LivePnlDto, PnlBreakdownDto } from "@/lib/pnl/types";
-import { buildCheckpoints, dayEndBlocks, fetchGas, replay } from "./tracker";
+import { asUniswap, buildCheckpoints, dayEndBlocks, fetchGas, replay } from "./tracker";
+import { asCompound, compoundCheckpoints, replayCompound } from "./compoundTracker";
+import { supplyApr } from "@/lib/compound/chain";
+import { marketByComet } from "@/lib/compound/markets";
+import {
+  type CompoundState,
+  compoundNav,
+  compoundNetCapital,
+  compoundRealisedTotal,
+  compoundTotalPnl,
+  compoundUnrealisedTotal,
+  owedCompValue,
+  positionValue,
+} from "@/lib/pnl/compoundEngine";
 
 /** A position further behind than this must be caught up by the worker first. */
 const MAX_DAYS_BEHIND = 7;
@@ -31,20 +44,111 @@ function breakdown(s: EngineState): PnlBreakdownDto {
     feeReval: s.realised.feeReval + unrealisedFeeReval(s),
     priceEffect: s.realised.priceEffect + s.unrealised.priceEffect,
     il: s.realised.il + s.unrealised.il,
+    rewardIncome: 0,
+    rewardReval: 0,
   };
 }
 
-const minus = (a: PnlBreakdownDto, b: PnlBreakdownDto): PnlBreakdownDto => ({
-  total: a.total - b.total,
-  feeIncome: a.feeIncome - b.feeIncome,
-  gasCost: a.gasCost - b.gasCost,
-  feeReval: a.feeReval - b.feeReval,
-  priceEffect: a.priceEffect - b.priceEffect,
-  il: a.il - b.il,
-});
+function compoundBreakdown(s: CompoundState): PnlBreakdownDto {
+  return {
+    total: compoundTotalPnl(s),
+    feeIncome: s.realised.interestIncome,
+    gasCost: s.realised.gasCost,
+    feeReval: s.realised.interestReval + s.unrealised.interestReval,
+    priceEffect: s.realised.priceEffect + s.unrealised.priceEffect,
+    il: 0,
+    rewardIncome: s.realised.compIncome,
+    rewardReval: s.realised.compReval + s.unrealised.compReval,
+  };
+}
 
+const minus = (a: PnlBreakdownDto, b: PnlBreakdownDto): PnlBreakdownDto =>
+  Object.fromEntries(Object.keys(a).map((k) => [k, a[k as keyof PnlBreakdownDto] - b[k as keyof PnlBreakdownDto]])) as unknown as PnlBreakdownDto;
+
+const ZERO_BREAKDOWN: PnlBreakdownDto = {
+  total: 0,
+  feeIncome: 0,
+  gasCost: 0,
+  feeReval: 0,
+  priceEffect: 0,
+  il: 0,
+  rewardIncome: 0,
+  rewardReval: 0,
+};
+
+/** Live P&L for any tracked position. */
 export async function livePositionPnl(positionId: string): Promise<LivePnlDto> {
-  const p = await db().position.findUniqueOrThrow({ where: { id: positionId }, include: { pool: true } });
+  const { protocol } = await db().position.findUniqueOrThrow({ where: { id: positionId }, select: { protocol: true } });
+  return protocol === "COMPOUND_V3" ? liveCompoundPnl(positionId) : liveUniswapPnl(positionId);
+}
+
+async function liveCompoundPnl(positionId: string): Promise<LivePnlDto> {
+  const p = asCompound(await db().position.findUniqueOrThrow({ where: { id: positionId }, include: { wallet: true } }));
+  if (!p.state || p.lastBlock === null) throw new LiveUnavailable("Position has not been backfilled yet");
+  const stored = p.state as unknown as CompoundState;
+
+  const head = (await chain().getBlockNumber()) - 2n;
+  const [fromTs, headTs] = await Promise.all([blockTimestamp(p.lastBlock), blockTimestamp(head)]);
+  const daysBehind = Math.floor(headTs / 86400) - Math.floor(fromTs / 86400);
+  if (daysBehind > MAX_DAYS_BEHIND) {
+    throw new LiveUnavailable(`Last recorded ${daysBehind} days ago. Track the position so the worker catches up first.`);
+  }
+
+  const { events, gas, dayEnds, checkpoints } = await compoundCheckpoints(p, p.lastBlock, head);
+  checkpoints.push({ kind: "POLL", block: head, obsBlock: head, events: [] });
+
+  const todayStart = Math.floor(headTs / 86400) * 86400;
+  let openState: CompoundState | null = null;
+  if (fromTs < todayStart) {
+    openState = stored;
+  } else {
+    const before = await db().snapshot.findFirst({
+      where: { positionId, timestamp: { lt: new Date(todayStart * 1000) } },
+      orderBy: { seq: "desc" },
+      select: { state: true },
+    });
+    openState = (before?.state as unknown as CompoundState | null) ?? null;
+  }
+
+  let state = stored;
+  let checksOk = true;
+  for await (const s of replayCompound(p, stored, checkpoints, gas)) {
+    state = s.result.state;
+    checksOk &&= s.result.checksOk;
+    if (s.ts < todayStart) openState = state;
+  }
+
+  const now = compoundBreakdown(state);
+  const open = openState ? compoundBreakdown(openState) : ZERO_BREAKDOWN;
+  return {
+    asOf: new Date(headTs * 1000).toISOString(),
+    block: head.toString(),
+    status: p.status,
+    unrecordedEvents: events.length,
+    unrecordedDays: dayEnds.length,
+    usd0: state.baseUsd,
+    usd1: state.compUsd,
+    inRange: true,
+    amount0: state.balance,
+    amount1: 0,
+    positionValue: positionValue(state),
+    heldFees0: state.owedComp,
+    heldFees1: 0,
+    heldFeesValue: owedCompValue(state),
+    nav: compoundNav(state),
+    netCapital: compoundNetCapital(state),
+    realised: compoundRealisedTotal(state),
+    unrealised: compoundUnrealisedTotal(state),
+    totals: now,
+    today: { date: new Date(todayStart * 1000).toISOString().slice(0, 10), ...minus(now, open) },
+    sinceLastSnapshot: minus(now, compoundBreakdown(stored)),
+    checksOk,
+    supplyApr: await supplyApr(marketByComet(p.market), head),
+  };
+}
+
+export async function liveUniswapPnl(positionId: string): Promise<LivePnlDto> {
+  const p = asUniswap(await db().position.findUniqueOrThrow({ where: { id: positionId }, include: { pool: true } }));
   if (!p.state || p.lastBlock === null) throw new LiveUnavailable("Position has not been backfilled yet");
   const stored = p.state as unknown as EngineState;
 
@@ -87,7 +191,7 @@ export async function livePositionPnl(positionId: string): Promise<LivePnlDto> {
   }
 
   const now = breakdown(state);
-  const open = openState ? breakdown(openState) : breakdown({ ...state, ...zeroTotals });
+  const open = openState ? breakdown(openState) : ZERO_BREAKDOWN;
   return {
     asOf: new Date(headTs * 1000).toISOString(),
     block: head.toString(),
@@ -113,8 +217,3 @@ export async function livePositionPnl(positionId: string): Promise<LivePnlDto> {
     checksOk,
   };
 }
-
-const zeroTotals: Pick<EngineState, "realised" | "unrealised"> = {
-  realised: { feeIncome: 0, gasCost: 0, feeReval: 0, priceEffect: 0, il: 0 },
-  unrealised: { priceEffect: 0, il: 0, feeReval0: 0, feeReval1: 0 },
-};
